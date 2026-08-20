@@ -1,4 +1,4 @@
-# DeepSeek-v4-Flash EXL3 on one DGX Spark
+<h1 align="center">DeepSeek-v4-Flash EXL3 on one DGX Spark</h1>
 
 <p align="center">
   <sub>by <a href="https://x.com/MiaAI_lab">Mia'a AI Lab</a></sub>
@@ -13,6 +13,8 @@ Serves the `0xSero/deepseek-v4-flash-0731-spark` build (3.0 bpw EXL3) via the `s
 
 > ⚙️ **Defaults changed (2026-08-20):** the default launcher `start.sh` now serves the **deep-context NVFP4 config** — `KV_RECORD=stock432` (native 432-byte records), `GPU_MEMORY_UTILIZATION=0.94`, `MAX_MODEL_LEN=334000`, `MAX_NUM_SEQS=1`, DSpark K5 healthy → **337,841-token KV pool** (a 255,400-token context served live). The prior 180k/584-byte setup lives on as `start-180k.sh` (writes `compose-180k.yaml`; default `start.sh` writes `compose.yml`). The NVFP4 dual-cache prefill bugs behind the old either/or are fixed — full story in the internal postmortem (kept local, not in this repo).
 
+---
+
 ## Highlights
 
 - **One DGX Spark, tensor-parallel 1** — no second node required (unlike the official FP4 build, which needs TP2 across two Sparks).
@@ -23,7 +25,9 @@ Serves the `0xSero/deepseek-v4-flash-0731-spark` build (3.0 bpw EXL3) via the `s
 - Two upstream kernel backports applied as read-only bind-mounts (see [Backports](#backports)).
 - Weights download once into a **shared network folder** (SSHFS), never duplicating the ~107 GB on local disk.
 
-### Measured results
+---
+
+## Measured results
 
 | Metric | Value |
 |---|---|
@@ -31,12 +35,16 @@ Serves the `0xSero/deepseek-v4-flash-0731-spark` build (3.0 bpw EXL3) via the `s
 | Decode tok/s (structured) — `start-180k.sh`, 180k context | **44–47 tok/s** |
 | KV cache pool | **330k tokens** (`start.sh`) · **180k tokens** (`start-180k.sh`) |
 
+---
+
 ## Requirements
 
 - **Hardware:** one NVIDIA DGX Spark (GB10, SM121, ≥128 GiB unified memory), GPU passthrough to Docker via the NVIDIA Container Toolkit.
 - **OS:** Linux aarch64 (DGX OS). The runtime image is **aarch64-only**.
 - **Software:** Docker Engine + Compose v2, `curl`, `sshfs` + `fuse3` (auto-installed with sudo when missing; requires `user_allow_other` in `/etc/fuse.conf`).
 - **Network:** a reachable SSH user/host to hold the shared weights folder (`10.0.0.1` / user `mia` by default — change in `start.sh`). No HuggingFace login required; the repo and image are public. If you do hit HF rate limits or need a private repo, set the optional `HF_TOKEN` in `start.sh` (or via env / `.env`).
+
+---
 
 ## Quick start
 
@@ -55,6 +63,8 @@ First boot is intentionally long: pulls the image, downloads ~107 GB of weights 
 > To produce them without starting anything: `./start.sh compose-gen` (the
 > 180k variant has no gen-only subcommand; its file is written when
 > `./start-180k.sh` runs). Do not hand-edit them.
+
+---
 
 ## Choosing a launcher: `start.sh` (default) vs `start-180k.sh` (alternative)
 
@@ -107,6 +117,8 @@ curl -sS http://127.0.0.1:8888/v1/chat/completions \
 
 Served model name: `deepseek-v4-flash-0731`. API: `http://127.0.0.1:8888/v1` (OpenAI-compatible chat/responses endpoints, DSpark spec decoding active).
 
+---
+
 ## Repository layout
 
 | Path | Purpose |
@@ -119,6 +131,8 @@ Served model name: `deepseek-v4-flash-0731`. API: `http://127.0.0.1:8888/v1` (Op
 | `data/` | Serving checkpoint (`tp1/`), K64 draft, caches (on local disk) |
 | `cache/` | Runtime JIT/kernel caches (CuTeDSL, TileLang, TRITON, vLLM) |
 
+---
+
 ## Commands
 
 | Command | Action |
@@ -130,6 +144,8 @@ Served model name: `deepseek-v4-flash-0731`. API: `http://127.0.0.1:8888/v1` (Op
 | `./start.sh stop` / `restart` / `down` | lifecycle (preserves `data/` + caches) |
 | `./start.sh pull` | pull the pinned image now |
 | `./start.sh help` | usage |
+
+---
 
 ## Tunables (edit in `start.sh`)
 
@@ -156,7 +172,10 @@ Served model name: `deepseek-v4-flash-0731`. API: `http://127.0.0.1:8888/v1` (Op
 
 Every tunable is an environment variable override: `GPU_MEMORY_UTILIZATION=0.94 ./start.sh`.
 
-## About the KV cache
+---
+
+<details>
+<summary><b>About the KV cache</b></summary>
 
 Two record layouts are switchable with `KV_RECORD` on `start.sh`:
 
@@ -173,7 +192,12 @@ This host reports only ~114.5 GiB of 121.63 as free (the unified-memory display/
 
 For more KV, options are structural (smaller weights / lower bpw, or a 2-node TP2 stack).
 
-## About the EXL3/Trellis quantization
+</details>
+
+---
+
+<details>
+<summary><b>About the EXL3/Trellis quantization</b></summary>
 
 This build ships **EXL3 3.0 bpw** weights (MCG codebook / Trellis `TR3` tier) on a **REAP-pruned K216** checkpoint that retains **216 of 256 experts** per MoE scope. Size: ~99.5 GiB. Non-routed tensors (attention, embeddings, output head, mHC, compressor, indexer) stay FP8/BF16. Two independent things are happening, and it's worth keeping them separate:
 
@@ -201,6 +225,10 @@ At matched bits-per-weight, EXL3 and GGUF I-quants are roughly similar, but EXL3
 
 Treat **EXL3 3.0 bpw ≈ Q4_K_M–Q5_K range in GGUF quality, often closer to Q5 in practice** for this model — noticeably better than a standard GGUF Q3 at similar size, in line with EXL3's reputation for punching above its bit rate. A user who tested this exact Spark recipe reported it feels about **Q5 GGUF quality** (previous Spark recipes used much lower-quality Q2/Q3 GGUF). Exact perceived quality still depends on the task — coding/agentic workloads were part of the calibration here.
 
+</details>
+
+---
+
 ## Client configuration
 
 The server exposes an OpenAI-compatible API on `http://127.0.0.1:8888/v1`. Recommended settings for any client:
@@ -215,7 +243,8 @@ The server exposes an OpenAI-compatible API on `http://127.0.0.1:8888/v1`. Recom
 | Reasoning | **thinking ON, effort `max` by default** | this is the server-side default; send `chat_template_kwargs` to override per request (thinking `false`, or `reasoning_effort` low/high/max) |
 | Tool calling | supported (`deepseek_v4` parser, auto tool choice) | |
 
-### Example — pi agent (`~/.pi/agent/models.json`)
+<details>
+<summary><b>Example — pi agent</b> (<code>~/.pi/agent/models.json</code>)</summary>
 
 The pi coding agent can target this server directly. Model config (this exact entry is already installed at `~/.pi/agent/models.json`):
 
@@ -252,6 +281,10 @@ The pi coding agent can target this server directly. Model config (this exact en
 
 Then select `deepseek-v4-flash-0731` in pi.
 
+</details>
+
+---
+
 ## Backports
 
 Two fixes from `local-inference-lab/b12x` (the current maintainer repo of the `sparkinfer`/b12x kernel stack) are applied onto the image's pinned kernel tree (`272a84bd`) as read-only bind-mounts in `image-patch/sparkinfer/`:
@@ -261,12 +294,16 @@ Two fixes from `local-inference-lab/b12x` (the current maintainer repo of the `s
 
 The 0xSero image is pinned and no newer build (with newer kernel commits) is published yet, which is why these are backported locally. Remove the `image-patch/sparkinfer/` mounts from `start.sh` to return to stock kernels.
 
+---
+
 ## Credits & links
 
 - Weights: [`0xSero/deepseek-v4-flash-0731-spark`](https://huggingface.co/0xSero/deepseek-v4-flash-0731-spark) (REAP-K216, EXL3 3.0 bpw, Trellis) and the upstream [`0xSero/DeepSeek-V4-Flash-0731-EXL3-3.0bpw`](https://huggingface.co/0xSero/DeepSeek-V4-Flash-0731-EXL3-3.0bpw)
 - Runtime image: `ghcr.io/0xsero/deepseek-v4-flash-0731-spark-sparkinfer` (NVIDIA vLLM 26.02 base)
 - Kernel stack: [`local-inference-lab/b12x`](https://github.com/local-inference-lab/b12x) (sparkinfer / formerly b12x)
 - Design reference: [`MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark`](https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark) (2-node TP2 recipe; our speed/KV work derives from its methodology)
+
+---
 
 ## License
 
