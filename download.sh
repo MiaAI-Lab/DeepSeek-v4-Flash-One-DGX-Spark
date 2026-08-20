@@ -8,9 +8,10 @@
 # run start.sh with AUTO_DOWNLOAD=0 and the server never touches the network.
 #
 # Behavior (mirrors the image entrypoint, same commands, same env):
-#   1. mounts the shared weights folder (./start.sh mount)
-#   2. runs the pinned image ONCE to snapshot_download the repo (~107 GB)
-#      into the shared cache, then coalesces TP4->TP1 into ./data/tp1
+#   1. downloads the repo (~107 GB) into the LOCAL HuggingFace cache and
+#      coalesces TP4->TP1 into ./data/tp1 (no remote machine involved)
+#   2. LAN-share mode: set REMOTE_HOST and it mounts the remote folder
+#      first, downloading into that instead
 #   3. verifies the TP1 manifest (SHA-256 inventory) unless --skip-checksums
 #
 # Idempotent: if ./data/tp1/rank-sliced-tp1-manifest.json already exists it
@@ -40,11 +41,12 @@ for arg in "$@"; do
   esac
 done
 
-REMOTE_HOST="${REMOTE_HOST:-10.0.0.1}"
-REMOTE_USER="${REMOTE_USER:-mia}"
+REMOTE_HOST="${REMOTE_HOST:-}"     # empty = fully local (default)
+REMOTE_USER="${REMOTE_USER:-mia}"  # used only when a remote share is enabled
 REMOTE_SHARE_DIR="${REMOTE_SHARE_DIR:-/home/mia/shared}"
 MIA_MOUNT="${MIA_MOUNT:-$HOME/mnt/mia-shared}"
-HF_CACHE="${HF_CACHE:-$MIA_MOUNT}"
+# Local default matches start.sh: weights land on THIS machine in ./hf-hub.
+HF_CACHE="${HF_CACHE:-$([ -n "$REMOTE_HOST" ] && echo "$MIA_MOUNT" || echo "$(pwd)/hf-hub")}"
 HF_CACHE="$(realpath -m "$HF_CACHE")"
 
 MODEL_PATH="./data/tp1"
@@ -56,8 +58,12 @@ if [ -f "$MANIFEST" ] && [ "$FORCE" != "1" ]; then
   exit 0
 fi
 
-echo ">> Preparing shared weights folder ..."
-./start.sh mount
+if [ -n "$REMOTE_HOST" ]; then
+  echo ">> Preparing shared weights folder (${REMOTE_USER}@${REMOTE_HOST}) ..."
+  ./start.sh mount
+else
+  echo ">> Local mode: downloads go to $HF_CACHE"
+fi
 
 snapshot_host="$HF_CACHE/hub/models--${MODEL_REPO//\//--}/snapshots/$MODEL_REVISION"
 snapshot_in_container="/hf-cache/hub/models--${MODEL_REPO//\//--}/snapshots/$MODEL_REVISION"

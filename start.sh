@@ -12,21 +12,21 @@
 # └──────────────────────────────────────────────────────────────────────────┘
 #
 
-# Weights are downloaded AUTOMATICALLY on first boot into a SHARED network
-# folder (created if missing) mounted over SSHFS:
-#   http://10.0.0.1 (user "mia")  ->  /home/mia/shared/  ->  $HOME/mnt/mia-shared
-# The share is used as the HuggingFace cache root, so the ~107 GB download
-# never lands on the Spark's local disk. The losslessly coalesced TP1 serving
-# checkpoint, the K64 draft, and runtime caches stay under ./data and ./cache.
-# No HuggingFace login is required (model and image are public).
+# Weights are downloaded AUTOMATICALLY on first boot into ./hf-hub — fully
+# LOCAL on this machine, no remote server involved. The losslessly coalesced
+# TP1 serving checkpoint, the K64 draft, and runtime caches stay under
+# ./data and ./cache. To keep one ~107 GB copy shared across LAN machines,
+# set REMOTE_HOST (and friends) below: the folder is then mounted over SSHFS
+# and used as the cache root instead (the old default, now opt-in). No
+# HuggingFace login is required (model and image are public).
 #
 # All tunables live in this file.  compose.yml is GENERATED — do not edit it.
 # The runtime image is aarch64-only and needs the NVIDIA Container Toolkit.
 #
 # Usage:
-#   ./start.sh              # mount share + start 256k config + wait for /health
+#   ./start.sh              # start 256k config (mounts share only in remote mode) + wait for /health
 #   ./start.sh --no-wait    # start without waiting for /health
-#   ./start.sh mount        # mount the shared folder (no service action)
+#   ./start.sh mount        # mount the shared folder (no-op in local mode)
 #   ./start.sh unmount      # unmount the shared folder
 #   ./start.sh logs         # tail container logs
 #   ./start.sh stop         # stop the container (preserves ./data and caches)
@@ -138,14 +138,19 @@ VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS="${VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGR
 DEFAULT_CHAT_TEMPLATE_KWARGS_THINKING="${DEFAULT_CHAT_TEMPLATE_KWARGS_THINKING:-true}"
 DEFAULT_CHAT_TEMPLATE_KWARGS_EFFORT="${DEFAULT_CHAT_TEMPLATE_KWARGS_EFFORT:-max}"
 
-# --- Shared network folder for the model weights ---------------------------
-REMOTE_HOST="${REMOTE_HOST:-10.0.0.1}"
-REMOTE_USER="${REMOTE_USER:-mia}"
+# --- Model weights cache: LOCAL by default, remote SSHFS share OPT-IN -------
+# DEFAULT: fully local — weights download straight into ./hf-hub on this
+# machine, no remote needed. To share a single copy of the ~107 GB weights
+# across machines on a LAN (spark3 + shared-folder setup), set REMOTE_HOST:
+# the script mounts the folder via SSHFS and uses it as the cache root.
+# REMOTE_HOST / REMOTE_USER / REMOTE_SHARE_DIR / MIA_MOUNT / HF_CACHE are
+# all env-overridable.
+REMOTE_HOST="${REMOTE_HOST:-}"     # empty = local mode (the default)
+REMOTE_USER="${REMOTE_USER:-mia}"  # used only when a remote share is enabled
 REMOTE_SHARE_DIR="${REMOTE_SHARE_DIR:-/home/mia/shared}"   # created if missing
 MIA_MOUNT="${MIA_MOUNT:-$HOME/mnt/mia-shared}"              # local SSHFS mountpoint
 
-# Weights live on the share, used as the HuggingFace cache root.
-HF_CACHE="${HF_CACHE:-$MIA_MOUNT}"
+HF_CACHE="${HF_CACHE:-$([ -n "$REMOTE_HOST" ] && echo "$MIA_MOUNT" || echo "$SCRIPT_DIR/hf-hub")}"
 HF_CACHE="$(realpath -m "$HF_CACHE")"
 
 # vLLM serving port (the pinned runtime honours the PORT env var; the image's
@@ -226,6 +231,8 @@ ensure_fuse_allow_other() {
 }
 
 mount_share() {
+  # Local mode (the default): nothing to mount — the HF cache is a local dir.
+  [ -n "$REMOTE_HOST" ] || return 0
   ensure_sshfs
   ensure_fuse_allow_other \
     || die "cannot use the shared folder without user_allow_other; run the sudo command above then retry."
@@ -348,9 +355,9 @@ generate_compose() {
 # 256k-context variant: compact NVFP4 KV records + CPU KV offload.
 # Pinned validated recipe from:
 #   https://huggingface.co/0xSero/deepseek-v4-flash-0731-spark
-# Weights are downloaded by the runtime into the shared HuggingFace cache
-# (${HF_CACHE} = ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_SHARE_DIR}) and
-# coalesced losslessly into ./data/tp1 for serving.
+# Weights are downloaded by the runtime into the HuggingFace cache
+# (${HF_CACHE} — local copy under ./hf-hub, or a LAN-mounted share when
+# REMOTE_HOST is set) and coalesced losslessly into ./data/tp1 for serving.
 name: deepseek-v4-flash-spark
 services:
   deepseek-v4-flash:
@@ -383,9 +390,9 @@ services:
       SERVED_MODEL_NAME: ${SERVED_MODEL_NAME}
       MODEL_REPO: ${MODEL_REPO}
       MODEL_REVISION: ${MODEL_REVISION}
-      # Source weights live directly inside the mounted shared HF cache
-      # snapshot (container path /hf-cache/...), so the 107 GB download never
-      # touches the local disk and is NOT duplicated under ./data.
+      # Source weights live directly inside the HF cache snapshot (container
+      # path /hf-cache/...), so the 107 GB download is never duplicated under
+      # ./data. Local mode: that snapshot is on this machine (./hf-hub).
       MODEL_SOURCE_DIR: ${snapshot_in_container}
       MAX_MODEL_LEN: "${MAX_MODEL_LEN}"
       MAX_NUM_SEQS: "${MAX_NUM_SEQS}"
@@ -500,7 +507,11 @@ YAML
   echo "  KV record     : $KV_RECORD (padded_NVFP4=$KV_PADDED_NVFP4, fp8_rope=$KV_FP8_ROPE)"
   echo "  model len     : ${MAX_MODEL_LEN}"
   echo "  CPU KV offload: ${KV_OFFLOAD_GB:-0} GiB"
-  echo "  shared cache  : $HF_CACHE (${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_SHARE_DIR})"
+  if [ -n "$REMOTE_HOST" ]; then
+    echo "  shared cache  : $HF_CACHE (${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_SHARE_DIR})"
+  else
+    echo "  local cache   : $HF_CACHE (fully local)"
+  fi
   echo "  source dir    : $snapshot_host"
   echo "  serving data  : $SCRIPT_DIR/data (TP1 checkpoint, draft, caches)"
 }

@@ -14,7 +14,7 @@ Serves the `0xSero/deepseek-v4-flash-0731-spark` build (3.0 bpw EXL3) via the `s
 - Tuned CUDA-graph capture (`[6,12,24]`) so concurrent decode stays on captured graphs instead of falling back to eager.
 - Long-prefill fairness (decode-starvation guard) enabled natively.
 - Two upstream kernel backports applied as read-only bind-mounts (see [Backports](#backports)).
-- Weights download once into a **shared network folder** (SSHFS), never duplicating the ~107 GB on local disk.
+- Weights download **fully locally** into `./hf-hub` (no remote machine involved). An optional LAN mode reuses one copy of the ~107 GB across machines via an SSHFS share (`REMOTE_HOST` — opt-in).
 
 ### Measured results (single boot, small samples — directional)
 
@@ -30,8 +30,8 @@ Methodology caveat: the decode numbers include time-to-first-token and are singl
 
 - **Hardware:** one NVIDIA DGX Spark (GB10, SM121, ≥128 GiB unified memory), GPU passthrough to Docker via the NVIDIA Container Toolkit.
 - **OS:** Linux aarch64 (DGX OS). The runtime image is **aarch64-only**.
-- **Software:** Docker Engine + Compose v2, `curl`, `sshfs` + `fuse3` (auto-installed with sudo when missing; requires `user_allow_other` in `/etc/fuse.conf`).
-- **Network:** a reachable SSH user/host to hold the shared weights folder (`10.0.0.1` / user `mia` by default — change in `start.sh`). No HuggingFace login required; the repo and image are public.
+- **Software:** Docker Engine + Compose v2, `curl`, and ~110+ GiB free local disk. `sshfs` + `fuse3` are only needed for the optional LAN sharing mode (auto-installed with sudo when missing; requires `user_allow_other` in `/etc/fuse.conf`).
+- **Network:** internet access to HuggingFace for the one-time ~107 GB download. The download is fully local — no remote host required. (Optional LAN mode: set `REMOTE_HOST`/`REMOTE_USER`/`REMOTE_SHARE_DIR` to reuse a single copy across machines.) No HuggingFace login required; the repo and image are public.
 
 ## Quick start
 
@@ -41,7 +41,7 @@ Methodology caveat: the decode numbers include time-to-first-token and are singl
 ./start.sh --no-wait   # start without waiting
 ```
 
-First boot is intentionally long: pulls the image, downloads ~107 GB of weights onto the shared folder, coalesces TP4→TP1 losslessly, builds the K64 draft, and captures CUDA graphs. It is marked `healthy` only when the OpenAI-compatible endpoint responds.
+First boot is intentionally long: pulls the image, downloads ~107 GB of weights locally (into `./hf-hub`), coalesces TP4→TP1 losslessly, builds the K64 draft, and captures CUDA graphs. It is marked `healthy` only when the OpenAI-compatible endpoint responds.
 
 > ℹ️ **No compose files are shipped in this repo** — `compose.yml` (from
 > `start.sh`) and `compose-180k.yaml` (from `start-180k.sh`) are generated
@@ -50,6 +50,26 @@ First boot is intentionally long: pulls the image, downloads ~107 GB of weights 
 > To produce them without starting anything: `./start.sh compose-gen` (the
 > 180k variant has no gen-only subcommand; its file is written when
 > `./start-180k.sh` runs). Do not hand-edit them.
+
+### Weights bootstrap — fully local
+
+Everything downloads **on this machine**; no remote host is involved in the
+default path:
+
+- **Default:** `./start.sh` (and `./start-180k.sh`) auto-download on first
+  boot into the local HF cache root `./hf-hub` and coalesce into
+  `./data/tp1`. The losslessly coalesced serving checkpoint, the K64 draft,
+  and the runtime caches all live on this machine.
+- **Optional offline prep:** `./download.sh` performs the same
+download+coalesce+verify standalone (also fully local). Once
+  `./data/tp1/rank-sliced-tp1-manifest.json` exists, boot skips the
+  download/coalesce step entirely, so a network-free runtime follows — the
+  manifest (not an env knob) is the gate.
+- **Optional LAN sharing:** set `REMOTE_HOST` (+ `REMOTE_USER` /
+  `REMOTE_SHARE_DIR` / `MIA_MOUNT` / `HF_CACHE`) to reuse a single weight
+  copy across machines instead of downloading locally — the spark3
+  arrangement, preserved as an opt-in mode on `main` and unchanged on the
+  `mia-shared-setup` branch.
 
 ## Choosing a launcher: `start.sh` (default) vs `start-180k.sh` (alternative)
 
@@ -127,6 +147,7 @@ Served model name: `deepseek-v4-flash-0731`. API: `http://127.0.0.1:8888/v1` (Op
 | `./start.sh stop` / `restart` / `down` | lifecycle (preserves `data/` + caches) |
 | `./start.sh pull` | pull the pinned image now |
 | `./start.sh help` | usage |
+| ... `mount` / `unmount` | manage the optional SSHFS share (no-op in local mode) |
 
 ## Tunables (edit in `start.sh`)
 
@@ -147,7 +168,8 @@ Served model name: `deepseek-v4-flash-0731`. API: `http://127.0.0.1:8888/v1` (Op
 | `VERIFY_MODEL_CHECKSUMS` | 1 | 0 skips SAP-256 inventory |
 | `DEFAULT_CHAT_TEMPLATE_KWARGS_THINKING` | `true` | server-side default thinking (client kwargs override) |
 | `DEFAULT_CHAT_TEMPLATE_KWARGS_EFFORT` | `max` | server-side default effort (override to `high`/`low`/`false`) |
-| `REMOTE_HOST` / `REMOTE_USER` / `REMOTE_SHARE_DIR` | `10.0.0.1` / `mia` / `/home/mia/shared` | shared weights folder |
+| `REMOTE_HOST` / `REMOTE_USER` / `REMOTE_SHARE_DIR` | *(empty)* / `mia` / `/home/mia/shared` | LAN-share mode, **opt-in** — set `REMOTE_HOST` to reuse one weight copy across machines; defaults target the spark3 shared folder (`10.0.0.1` / `mia` / `/home/mia/shared`) |
+| `HF_CACHE` | `./hf-hub` (local) or `$MIA_MOUNT` (remote mode) | where weights download — always resolved absolute |
 | `SERVING_PORT` | 8888 | OpenAI-compatible port |
 
 Every tunable is an environment variable override: `GPU_MEMORY_UTILIZATION=0.94 ./start.sh`.
