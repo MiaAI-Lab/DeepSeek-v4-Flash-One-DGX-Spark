@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# DeepSeek V4 Flash 0731 (REAP/EXL3/Trellis) on one NVIDIA DGX Spark.
+# DeepSeek V4 Flash 0731 (EXL3/ExLlamaV3) on one NVIDIA DGX Spark.
 #
 # Launcher for the model card at
 #   https://huggingface.co/0xSero/deepseek-v4-flash-0731-spark
