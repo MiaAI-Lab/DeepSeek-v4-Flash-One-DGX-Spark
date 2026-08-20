@@ -7,7 +7,7 @@
   <a href="https://x.com/MiaAI_lab" target="_blank" rel="noopener noreferrer" style="display:inline-block;margin:0 8px;vertical-align:middle;"><img src="https://img.shields.io/badge/Follow%20me%20on%20X-000000?style=for-the-badge&logo=x&logoColor=white" alt="Follow Mia on X" height="28" style="height:28px;width:auto;vertical-align:middle;border:0;" /></a>
 </p>
 
-Single-node launcher for **DeepSeek V4 Flash 0731 (REAP/EXL3/Trellis)** with DSpark speculative decoding on one **NVIDIA DGX Spark** (GB10, SM121, 128 GiB unified memory).
+Single-node launcher for **DeepSeek V4 Flash 0731 (EXL3/ExLlamaV3)** with DSpark speculative decoding on one **NVIDIA DGX Spark** (GB10, SM121, 128 GiB unified memory).
 
 Serves the `0xSero/deepseek-v4-flash-0731-spark` build (3.0 bpw EXL3) via the `sparkinfer` (formerly `b12x`) kernel stack — a complete, self-contained Docker recipe tuned for speed and KV-cache headroom on a single device.
 

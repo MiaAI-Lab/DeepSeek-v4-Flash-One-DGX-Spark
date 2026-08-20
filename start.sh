@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# DeepSeek V4 Flash 0731 (REAP/EXL3/Trellis) on one NVIDIA DGX Spark.
+# DeepSeek V4 Flash 0731 (EXL3/ExLlamaV3) on one NVIDIA DGX Spark.
 #
 # ┌──────────────────────────────────────────────────────────────────────────┐
 # │ DEEP-CONTEXT VARIANT — 334k single-request (validated 2026-08-20)          │
