@@ -143,14 +143,13 @@ Served model name: `deepseek-v4-flash-0731`. API: `http://127.0.0.1:8888/v1` (Op
 
 | Command | Action |
 |---|---|
-| `./start.sh` | mount share + start + wait for `/health` |
+| `./start.sh` | start (deep-context config) + wait for `/health` |
 | `./start.sh --no-wait` | start without waiting |
-| `./start.sh mount` / `unmount` | manage the SSHFS share |
+| `./start.sh mount` / `unmount` | manage the optional SSHFS share (no-op in local mode) |
 | `./start.sh logs` / `ps` / `status` | inspect runtime |
 | `./start.sh stop` / `restart` / `down` | lifecycle (preserves `data/` + caches) |
 | `./start.sh pull` | pull the pinned image now |
 | `./start.sh help` | usage |
-| ... `mount` / `unmount` | manage the optional SSHFS share (no-op in local mode) |
 
 ## Tunables (edit in `start.sh`)
 
@@ -185,8 +184,6 @@ Two record layouts are switchable with `KV_RECORD` on `start.sh`:
 - **`stock432` (default, fixed 2026-08-20):** native 432-byte NVFP4 records → **337,841-token pool** at util 0.94 (255,400-token context served, DSpark acceptance 0.65–0.92 / 0.44 / 0.29–0.46 / 0.19–0.42 / 0.12). The dual-cache prefill path had four NVFP4 bugs (fixed via `image-patch/sparkinfer/` bind mounts) — see the internal postmortem (kept local, not in this repo).
 - **`padded`:** 584-byte FP8-compat records (stock semantics, ~270k pool at 256k) — the fallback.
 
-The 180k/584 numbers below are the historical sweep for the `start-180k.sh` variant:
-
 This host reports only ~114.5 GiB of 121.63 as free (the unified-memory display/desktop holds ~7 GiB), so `GPU_MEMORY_UTILIZATION` above **~0.940 fails to boot** — the vendor's recipe value 0.9465 does **not** start here. The numbers below are the historical sweep of the **584-byte FP8-compat layout used by `start-180k.sh`**; the 432-byte NVFP4 layout used by the default `start.sh` reaches **337,841 tokens** (see the intro). The `start-180k.sh` ceiling on this hardware:
 
 | Config | KV pool | Notes |
@@ -195,7 +192,7 @@ This host reports only ~114.5 GiB of 121.63 as free (the unified-memory display/
 | 0.936 + est=0 | ~165k tokens | graph reservation reclaimed |
 | **0.940 + est=0 (sweep winner)** | **~181k tokens** | validated with a 130k prefill, no OOM |
 
-Pool of 180k tokens ⇒ ~1.39 concurrent full-length (131k) requests. For more KV, options are structural (smaller weights / lower bpw, or a 2-node TP2 stack).
+For more KV, options are structural (smaller weights / lower bpw, or a 2-node TP2 stack).
 
 ## About the EXL3/Trellis quantization
 
