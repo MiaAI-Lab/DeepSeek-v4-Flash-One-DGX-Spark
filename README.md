@@ -291,4 +291,4 @@ The 0xSero image is pinned and no newer build (with newer kernel commits) is pub
 
 ## License
 
-This repository is packaging/orchestration glue. The runtime image, model weights, and upstream libraries are covered by their own licenses.
+The packaging/orchestration glue in this repository is licensed under the [MIT License](LICENSE). The runtime image, model weights, and upstream libraries are covered by their own licenses.
