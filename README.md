@@ -43,6 +43,14 @@ Methodology caveat: the decode numbers include time-to-first-token and are singl
 
 First boot is intentionally long: pulls the image, downloads ~107 GB of weights onto the shared folder, coalesces TP4→TP1 losslessly, builds the K64 draft, and captures CUDA graphs. It is marked `healthy` only when the OpenAI-compatible endpoint responds.
 
+> ℹ️ **No compose files are shipped in this repo** — `compose.yml` (from
+> `start.sh`) and `compose-180k.yaml` (from `start-180k.sh`) are generated
+> automatically by their launcher on the first run and rewritten on every
+> launch. They are gitignored, since the real config lives in the launchers.
+> To produce them without starting anything: `./start.sh compose-gen` (the
+> 180k variant has no gen-only subcommand; its file is written when
+> `./start-180k.sh` runs). Do not hand-edit them.
+
 ## Choosing a launcher: `start.sh` (default) vs `start-180k.sh` (alternative)
 
 Both launchers drive the **same** stack — identical pinned weights, image, lossless
