@@ -4,7 +4,7 @@ Single-node launcher for **DeepSeek V4 Flash 0731 (REAP/EXL3/Trellis)** with DSp
 
 Serves the `0xSero/deepseek-v4-flash-0731-spark` build (3.0 bpw EXL3) via the `sparkinfer` (formerly `b12x`) kernel stack — a complete, self-contained Docker recipe tuned for speed and KV-cache headroom on a single device.
 
-> ⚙️ **Defaults changed (2026-08-20):** `GPU_MEMORY_UTILIZATION=0.94`, `VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0`, `MAX_MODEL_LEN=180000`, served name `deepseek-v4-flash-0731` (was `...-spark`), **default thinking ON at max effort**. All validated on this host — see [KV cache](#about-the-kv-cache) and [Client configuration](#client-configuration).
+> ⚙️ **Defaults changed (2026-08-20):** the default launcher `start.sh` now serves the **deep-context NVFP4 config** — `KV_RECORD=stock432` (native 432-byte records), `GPU_MEMORY_UTILIZATION=0.94`, `MAX_MODEL_LEN=334000`, `MAX_NUM_SEQS=1`, DSpark K5 healthy → **337,841-token KV pool** (a 255,400-token context served live). The prior 180k/584-byte setup lives on as `start-180k.sh` (writes `compose.yaml`; default `start.sh` writes `compose-256k.yaml`). The NVFP4 dual-cache prefill bugs behind the old either/or are fixed — full story in the internal postmortem (kept local, not in this repo).
 
 ## Highlights
 
@@ -36,7 +36,8 @@ Methodology caveat: the decode numbers include time-to-first-token and are singl
 ## Quick start
 
 ```bash
-./start.sh      # mounts the share, writes compose.yaml, starts, waits for /health
+./start.sh      # DEFAULT: deep-context NVFP4 (334k, DSpark) — writes compose-256k.yaml
+./start-180k.sh # the proven 180k / 584-byte-record variant — writes compose.yaml
 ./start.sh --no-wait   # start without waiting
 ```
 
@@ -58,7 +59,8 @@ Served model name: `deepseek-v4-flash-0731`. API: `http://127.0.0.1:8888/v1` (Op
 
 | Path | Purpose |
 |---|---|
-| `start.sh` | The launcher — all tunables live here; **regenerates** `compose.yaml` (do not edit that file directly) |
+| `start.sh` | **Default launcher** (deep-context NVFP4, 334k/1-seq, DSpark) — all tunables live here; **regenerates** `compose-256k.yaml` (do not edit that file directly) |
+| `start-180k.sh` | The prior 180k variant (584-byte records, 2 seqs); regenerates `compose.yaml` |
 | `compose.yaml` | Generated; pinned image + mounts + runtime env |
 | `image-patch/` | Read-only bind-mount overrides (coalescer + kernel backports) |
 | `data/` | Serving checkpoint (`tp1/`), K64 draft, caches (on local disk) |
@@ -80,8 +82,8 @@ Served model name: `deepseek-v4-flash-0731`. API: `http://127.0.0.1:8888/v1` (Op
 
 | Variable | Default | Notes |
 |---|---|---|
-| `MAX_MODEL_LEN` | 180000 | validated against the 180k KV pool at util 0.94; raise only with KV room (see KV section) |
-| `MAX_NUM_SEQS` | 4 | active sequence slots |
+| `MAX_MODEL_LEN` | 334000 | `start.sh` default: ~1.1% under the validated 337,841-token NVFP4 pool; lower it if a boot ever fails the KV check (180k variant: 180000) |
+| `MAX_NUM_SEQS` | 1 | `start.sh` default (single deep-context request; raise to share the pool: 2×169k, 3×113k, 4×84k) |
 | `MAX_NUM_BATCHED_TOKENS` | 8224 | prefill budget |
 | `GPU_MEMORY_UTILIZATION` | 0.94 | **max this host boots at** (see KV section) |
 | `VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS` | 0 | removes the profiler's ~0.68 GiB graph over-reservation (real usage is 0.07 GiB) → grows KV |
@@ -101,6 +103,13 @@ Served model name: `deepseek-v4-flash-0731`. API: `http://127.0.0.1:8888/v1` (Op
 Every tunable is an environment variable override: `GPU_MEMORY_UTILIZATION=0.94 ./start.sh`.
 
 ## About the KV cache
+
+Two record layouts are switchable with `KV_RECORD` on `start.sh`:
+
+- **`stock432` (default, fixed 2026-08-20):** native 432-byte NVFP4 records → **337,841-token pool** at util 0.94 (255,400-token context served, DSpark acceptance 0.65–0.92 / 0.44 / 0.29–0.46 / 0.19–0.42 / 0.12). The dual-cache prefill path had four NVFP4 bugs (fixed via `image-patch/sparkinfer/` bind mounts) — see the internal postmortem (kept local, not in this repo).
+- **`padded`:** 584-byte FP8-compat records (stock semantics, ~270k pool at 256k) — the fallback.
+
+The 180k/584 numbers below are the historical sweep for the `start-180k.sh` variant:
 
 This host reports only ~114.5 GiB of 121.63 as free (the unified-memory display/desktop holds ~7 GiB), so `GPU_MEMORY_UTILIZATION` above **~0.940 fails to boot** — the vendor's recipe value 0.9465 does **not** start here. The KV ceiling on this hardware:
 

@@ -2,14 +2,8 @@
 #
 # DeepSeek V4 Flash 0731 (REAP/EXL3/Trellis) on one NVIDIA DGX Spark.
 #
-# ┌──────────────────────────────────────────────────────────────────────────┐
-# │ DEEP-CONTEXT VARIANT — 334k single-request (validated 2026-08-20)         │
-# │ Native 432 B NVFP4 KV records + util 0.94 → 337,841-token pool with       │
-# │ DSpark speculative decoding healthy (acceptance ~0.65/0.44/0.31/0.17/0.07).│
-# │   * logs into ./compose-256k.yaml (NEVER touches ./compose.yaml)         │
-# │   * the running server keeps serving; only run this when you want to     │
-# │     swap to the 256k config (docker compose up -d recreates in place)    │
-# └──────────────────────────────────────────────────────────────────────────┘
+# Launcher for the model card at
+#   https://huggingface.co/0xSero/deepseek-v4-flash-0731-spark
 #
 # Weights are downloaded AUTOMATICALLY on first boot into a SHARED network
 # folder (created if missing) mounted over SSHFS:
@@ -19,34 +13,23 @@
 # checkpoint, the K64 draft, and runtime caches stay under ./data and ./cache.
 # No HuggingFace login is required (model and image are public).
 #
-# All tunables live in this file.  compose-256k.yaml is GENERATED — do not edit it.
+# All tunables live in this file.  compose.yaml is GENERATED — do not edit it.
 # The runtime image is aarch64-only and needs the NVIDIA Container Toolkit.
 #
 # Usage:
-#   ./start.sh              # mount share + start 256k config + wait for /health
-#   ./start.sh --no-wait    # start without waiting for /health
-#   ./start.sh mount        # mount the shared folder (no service action)
-#   ./start.sh unmount      # unmount the shared folder
-#   ./start.sh logs         # tail container logs
-#   ./start.sh stop         # stop the container (preserves ./data and caches)
-#   ./start.sh restart      # restart the container
-#   ./start.sh down         # remove container (preserves ./data and caches)
-#   ./start.sh ps           # show container status
-#   ./start.sh pull         # pull the pinned image now
-#   ./start.sh compose-gen  # only (re)generate compose-256k.yaml, no docker action
-#   ./start.sh help
-#
-# NOTE: this writes compose-256k.yaml and exports COMPOSE_FILE accordingly.
-# It shares the same compose project name as start.sh, so once run, docker
-# compose up -d recreates the SAME container with the 256k config. The live
-# server keeps running until you actually invoke this script.
+#   ./start-180k.sh              # mount share + start + wait for /health
+#   ./start-180k.sh --no-wait    # start without waiting for /health
+#   ./start-180k.sh mount        # mount the shared folder (no service action)
+#   ./start-180k.sh unmount      # unmount the shared folder
+#   ./start-180k.sh logs         # tail container logs
+#   ./start-180k.sh stop         # stop the container (preserves ./data and caches)
+#   ./start-180k.sh restart      # restart the container
+#   ./start-180k.sh down         # remove container (preserves ./data and caches)
+#   ./start-180k.sh ps           # show container status
+#   ./start-180k.sh pull         # pull the pinned image now
+#   ./start-180k.sh help
 #
 set -Eeuo pipefail
-
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
-export COMPOSE_FILE=compose-256k.yaml   # this variant's own compose file
-
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -59,40 +42,17 @@ MODEL_REVISION="${MODEL_REVISION:-22f28d32b9b29b4352eaa380ff8c2c170b2847ab}"
 IMAGE_DIGEST="ghcr.io/0xsero/deepseek-v4-flash-0731-spark-sparkinfer@sha256:2e077489a83a0360952828051fe7f7a32c1801e5ce8436d85f7267583d614ff4"
 
 SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-deepseek-v4-flash-0731}"
-MAX_MODEL_LEN="${MAX_MODEL_LEN:-334000}"   # single deep context: ~1.1% under the validated 337,841-token pool (util 0.94). If a boot ever fails the "KV cache needed" check, lower this.
-MAX_NUM_SEQS="${MAX_NUM_SEQS:-1}"          # single-request deep-context server; raise for concurrent slots (contexts share the 337,841-token pool: 2x~169k, 3x~113k, 4x~84k)
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-180000}"   # validated against the 180k KV pool; see README KV section
+MAX_NUM_SEQS="${MAX_NUM_SEQS:-4}"
 MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-8224}"
 MODE="${MODE:-dspark}"                 # fixed K5 DSpark speculative draft
-GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.94}"   # 256k needs the extra ~1.2 GiB (0.93 leaves only 6.32 GiB KV < 6.99 needed). Boot-safe BECAUSE restart: on-failure:1 can never loop: worst case one clean exit. Requires free host RAM >= 0.94*121.63 = 114.3 GiB at launch (check free -h; stop the old container first).
+GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.94}"   # max usable on this host (above ~0.94 fails to boot)
 VERIFY_MODEL_CHECKSUMS="${VERIFY_MODEL_CHECKSUMS:-1}"
-
-# --- 256k KV-record layout (improve-context.md levers #1 / #2) -----------
-# The image ships the FAT 584-byte padded FP8-compat KV record
-# (VLLM_DSV4_PADDED_NVFP4=1). Smaller native NVFP4 records give +35%..+59%
-# more KV tokens with no weight/util change:
-#   KV_RECORD=padded   -> 584 B (stock semantics, fallback if NVFP4 breaks)
-#   KV_RECORD=stock432 -> 432 B native NVFP4  (337,841-token pool at util 0.94;
-#                        prefill/dual-cache bugs FIXED 2026-08-20 — see
-#                        internal postmortem, not in this repo)  [default: max context]
-#   KV_RECORD=rope368  -> 368 B FP8-RoPE (GLM-only knob; on DSV4 == stock432)
-KV_RECORD="${KV_RECORD:-stock432}"
-case "$KV_RECORD" in
-  padded)    export KV_PADDED_NVFP4=1; export KV_FP8_ROPE=0 ;;  # no levers on
-  stock432)  export KV_PADDED_NVFP4=0; export KV_FP8_ROPE=0 ;;  # lever #1
-  rope368)   export KV_PADDED_NVFP4=0; export KV_FP8_ROPE=1 ;;  # levers #1+#2
-  *) die "KV_RECORD must be padded|stock432|rope368 (got '$KV_RECORD')" ;;
-esac
-
-# --- CPU KV offload (improve-context.md lever #3) -------------------------
-# UMA machine: "CPU" memory is the same physical 128 GiB pool, so offloading
-# cold KV blocks extends the pool past the profiler's plan with low penalty.
-# 0 = disabled. GiB of CPU-side KV to allow offloading.
-KV_OFFLOAD_GB="${KV_OFFLOAD_GB:-0}"   # 0=off (default). CPU-KV-offload (lever
-    # #3) was dropped as the default because the SimpleCPUOffloadConnector is
-    # incompatible with the image's PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-    # (hard VllmConfig error). The 368-byte record alone reaches ~287k tokens,
-    # enough for 256k. If you DO enable offload (>0), you must also set
-    # PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False (else config fails).
+# Split download (one-time bootstrap) out of the runtime: when AUTO_DOWNLOAD=0
+# the container NEVER touches the network — weights must already be present via
+# ./download.sh (start-180k.sh fails fast with a clear message instead). Default 1
+# keeps the original auto-download-on-first-boot behavior.
+AUTO_DOWNLOAD="${AUTO_DOWNLOAD:-1}"   # 1=auto-download on first boot, 0=require ./download.sh first
 
 # --- Scheduler fairness knobs (see PLAN.md P1) -----------------------------
 # The image's serve-ds4-flash.sh appends EXTRA_VLLM_ARGS verbatim (word-split)
@@ -236,7 +196,7 @@ mount_share() {
       unmount_share
     else
       timeout 8 ls "$MIA_MOUNT" >/dev/null 2>&1 \
-        || warn "the mount at $MIA_MOUNT looks stale; consider: ./start.sh unmount"
+        || warn "the mount at $MIA_MOUNT looks stale; consider: ./start-180k.sh unmount"
       return 0
     fi
   fi
@@ -246,7 +206,7 @@ mount_share() {
   echo ">> Mounting ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_SHARE_DIR} -> $MIA_MOUNT"
   sshfs "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_SHARE_DIR}" "$MIA_MOUNT" \
     -o allow_other,reconnect,ServerAliveInterval=15,ServerAliveCountMax=3,follow_symlinks,idmap=user \
-    || die "SSHFS mount failed. Try: ./start.sh unmount"
+    || die "SSHFS mount failed. Try: ./start-180k.sh unmount"
   timeout 8 ls "$MIA_MOUNT" >/dev/null 2>&1 \
     || die "share mounted but not readable."
   echo ">> Shared folder ready: $MIA_MOUNT"
@@ -299,7 +259,7 @@ preflight() {
 }
 
 # ---------------------------------------------------------------------------
-# compose-256k.yaml generation
+# compose.yaml generation
 # ---------------------------------------------------------------------------
 generate_compose() {
   local cache_repo_dir="models--${MODEL_REPO//\//--}"   # HF cache folder name
@@ -318,10 +278,6 @@ generate_compose() {
   fi
   if [ "${MAX_NUM_PARTIAL_PREFILLS:-0}" -gt 0 ] 2>/dev/null; then
     EXTRA_VLLM_ARGS="${EXTRA_VLLM_ARGS} --max-num-partial-prefills ${MAX_NUM_PARTIAL_PREFILLS}"
-  fi
-  # CPU KV offload (lever #3, improve-context.md). 12 GiB default on UMA.
-  if [ "${KV_OFFLOAD_GB:-0}" -gt 0 ] 2>/dev/null; then
-    EXTRA_VLLM_ARGS="${EXTRA_VLLM_ARGS} --kv-offloading-size ${KV_OFFLOAD_GB} --kv-offloading-backend native"
   fi
   EXTRA_VLLM_ARGS="${EXTRA_VLLM_ARGS# }"   # strip leading space when both on
 
@@ -342,9 +298,8 @@ generate_compose() {
   mkdir -p "$HF_CACHE" "$snapshot_host"   # through the share; keeps dirs user-owned
   mkdir -p data cache
 
-  cat > compose-256k.yaml <<YAML
-# GENERATED by start.sh -- do not edit. Change knobs in start.sh and rerun.
-# 256k-context variant: compact NVFP4 KV records + CPU KV offload.
+  cat > compose.yaml <<YAML
+# GENERATED by start-180k.sh -- do not edit. Change knobs in start-180k.sh and rerun.
 # Pinned validated recipe from:
 #   https://huggingface.co/0xSero/deepseek-v4-flash-0731-spark
 # Weights are downloaded by the runtime into the shared HuggingFace cache
@@ -355,17 +310,12 @@ services:
   deepseek-v4-flash:
     image: ${IMAGE_DIGEST}
     pull_policy: always
-    restart: on-failure:1   # CRITICAL: never death-spiral the host. A failing
-    # 256k boot must stop after ONE failure (bad boots OOM-looping under
-    # 'unless-stopped' pushed host RAM negative and hard-reset the box). If it
-    # fails once, ./start.sh again later.
+    restart: unless-stopped
     network_mode: host
     ipc: host
     shm_size: 16gb
     # Boot fix for the 26.02 image: upgrade xgrammar>=0.2.4 (tool calling),
     # restore transformers (pip side effect), then exec the image entrypoint.
-    # 256k variant: entrypoint is the PATCHED copy that reads KV_FP8_ROPE /
-    # VLLM_DSV4_PADDED_NVFP4 from the environment (see image-patch/).
     entrypoint: ["/bin/bash", "-lc", "bash /patch-run-entrypoint.sh && exec /opt/recipe/scripts/entrypoint.sh"]
     # Override the image's hardcoded-8000 HEALTHCHECK for the new serving port.
     healthcheck:
@@ -389,10 +339,6 @@ services:
       MAX_MODEL_LEN: "${MAX_MODEL_LEN}"
       MAX_NUM_SEQS: "${MAX_NUM_SEQS}"
       MAX_NUM_BATCHED_TOKENS: "${MAX_NUM_BATCHED_TOKENS}"
-      # 256k KV-record layout (overrides the image's hardcoded defaults; the
-      # entrypoint is the patched copy that honors these):
-      VLLM_DSV4_PADDED_NVFP4: "${KV_PADDED_NVFP4}"
-      KV_FP8_ROPE: "${KV_FP8_ROPE}"
       MODE: ${MODE}
       DSPARK_TOKENS: "5"
       DSPARK_CAPACITY: "0"
@@ -403,6 +349,9 @@ services:
       VLLM_USE_B12X_WO_PROJECTION: "1"
       GPU_MEMORY_UTILIZATION: "${GPU_MEMORY_UTILIZATION}"
       VERIFY_MODEL_CHECKSUMS: "${VERIFY_MODEL_CHECKSUMS}"
+      # When AUTO_DOWNLOAD=0 the patched entrypoint skips download/coalesce and
+      # fails fast if ./data/tp1 is missing (bootstrap via ./download.sh).
+      SKIP_DOWNLOAD: "$([ "${AUTO_DOWNLOAD:-1}" = "0" ] && echo 1 || echo 0)"
       # CudaGraph capture sizes (P2). Empty = image default.
       MAX_CUDAGRAPH_CAPTURE_SIZE: "${CAPTURE_SIZE_ENV}"
       CUDAGRAPH_CAPTURE_SIZES: "${CAPTURE_SIZES_ENV}"
@@ -414,10 +363,6 @@ services:
       # Default thinking (patched serve-ds4-flash.sh): thinking ON, effort max.
       DEFAULT_CHAT_TEMPLATE_KWARGS_THINKING: "${DEFAULT_CHAT_TEMPLATE_KWARGS_THINKING}"
       DEFAULT_CHAT_TEMPLATE_KWARGS_EFFORT: "${DEFAULT_CHAT_TEMPLATE_KWARGS_EFFORT}"
-      # KV offload is OFF by default (incompatible with the image's
-      # expandable_segments allocator; see KV_OFFLOAD_GB notes).
-      KV_OFFLOAD_GB: "${KV_OFFLOAD_GB}"
-      VLLM_USE_SIMPLE_KV_OFFLOAD: "$([ "${KV_OFFLOAD_GB:-0}" -gt 0 ] 2>/dev/null && echo 1 || echo 0)"
     volumes:
       - ./data:/models
       - ./cache:/cache
@@ -446,6 +391,12 @@ services:
       - type: bind
         source: "${SCRIPT_DIR}/image-patch/entrypoint-toolfix.sh"
         target: /patch-run-entrypoint.sh
+        read_only: true
+      # Split-bootstrap variant: honors SKIP_DOWNLOAD so AUTO_DOWNLOAD=0 never
+      # touches the network (bootstrap via ./download.sh).
+      - type: bind
+        source: "${SCRIPT_DIR}/image-patch/entrypoint-no-download.sh"
+        target: /opt/recipe/scripts/entrypoint.sh
         read_only: true
       # Server-default thinking flags (true/max) via env-templated serve script.
       - type: bind
@@ -480,12 +431,6 @@ services:
         source: "${SCRIPT_DIR}/image-patch/sparkinfer/attention/_shared/mla/prefill_mg.py"
         target: /opt/sparkinfer/sparkinfer/attention/_shared/mla/prefill_mg.py
         read_only: true
-      # 256k variant ONLY: patched recipe entrypoint honoring KV_FP8_ROPE /
-      # VLLM_DSV4_PADDED_NVFP4 from env (see image-patch/entrypoint-256k.sh).
-      - type: bind
-        source: "${SCRIPT_DIR}/image-patch/entrypoint-256k.sh"
-        target: /opt/recipe/scripts/entrypoint.sh
-        read_only: true
     deploy:
       resources:
         reservations:
@@ -495,13 +440,10 @@ services:
               capabilities: [gpu]
 YAML
 
-  echo "Wrote compose-256k.yaml"
-  echo "  KV record     : $KV_RECORD (padded_NVFP4=$KV_PADDED_NVFP4, fp8_rope=$KV_FP8_ROPE)"
-  echo "  model len     : ${MAX_MODEL_LEN}"
-  echo "  CPU KV offload: ${KV_OFFLOAD_GB:-0} GiB"
-  echo "  shared cache  : $HF_CACHE (${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_SHARE_DIR})"
-  echo "  source dir    : $snapshot_host"
-  echo "  serving data  : $SCRIPT_DIR/data (TP1 checkpoint, draft, caches)"
+  echo "Wrote compose.yaml"
+  echo "  shared cache : $HF_CACHE (${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_SHARE_DIR})"
+  echo "  source dir   : $snapshot_host"
+  echo "  serving data : $SCRIPT_DIR/data (TP1 checkpoint, draft, caches)"
 }
 
 # ---------------------------------------------------------------------------
@@ -518,7 +460,7 @@ cmd_start() {
   docker compose up -d
 
   if [ "$no_wait" = "--no-wait" ]; then
-    echo ">> Started. Follow progress with: ./start.sh logs"
+    echo ">> Started. Follow progress with: ./sh logs"
     return 0
   fi
 
@@ -564,7 +506,7 @@ cmd_start() {
       echo "         \"messages\": [{\"role\": \"user\", \"content\": \"Write a correct Python function that returns the first n Fibonacci numbers.\"}],"
       echo "         \"temperature\": 0, \"max_completion_tokens\": 256 }'"
       echo
-      echo "   Inspect runtime: ./start.sh logs    Shut down: ./start.sh down"
+      echo "   Inspect runtime: ./sh logs    Shut down: ./sh down"
       return 0
     fi
     if [ "$(date +%s)" -ge "$deadline" ]; then
@@ -580,17 +522,12 @@ cmd_start() {
 }
 
 ensure_compose() {
-  [ -f compose-256k.yaml ] || generate_compose
+  [ -f compose.yaml ] || generate_compose
 }
 
 case "${1:-start}" in
   start|-no-wait|--no-wait)
     cmd_start "${1:-start}"
-    ;;
-  compose-gen|gen)
-    # Generate compose-256k.yaml only; no docker action. Safe to run now.
-    generate_compose
-    echo "compose-256k.yaml is ready. Apply later with: ./start.sh start"
     ;;
   mount)         ensure_sshfs; mount_share;;
   unmount)       unmount_share;;

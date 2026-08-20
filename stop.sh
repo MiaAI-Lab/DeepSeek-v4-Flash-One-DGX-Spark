@@ -4,8 +4,8 @@
 # ./data, ./cache and all weights on the shared folder.
 #
 # This gracefully stops the running container via `docker compose stop`
-# (SIGTERM to vLLM). Restart later with: ./start.sh   (or ./start-256k.sh for
-# the 256k-context variant).
+# (SIGTERM to vLLM). Restart later with: ./start.sh   (or ./start-180k.sh for
+# the 180k variant).
 #
 # Usage:
 #   ./stop.sh              # stop the running container
