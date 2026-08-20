@@ -15,10 +15,10 @@ set -Eeuo pipefail
 cd "$(dirname "$0")"
 
 # Prefer the 256k variant's compose file when its container is the one running.
-if [ -f compose-256k.yaml ] && docker compose -f compose-256k.yaml ps --status running --quiet 2>/dev/null | grep -q .; then
-  COMPOSE_FILE=compose-256k.yaml
+if [ -f compose.yml ] && docker compose -f compose.yml ps --status running --quiet 2>/dev/null | grep -q .; then
+  COMPOSE_FILE=compose.yml
 else
-  COMPOSE_FILE=compose.yaml
+  COMPOSE_FILE=compose-180k.yaml
 fi
 
 case "${1:-}" in
