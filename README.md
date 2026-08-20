@@ -23,15 +23,13 @@ Serves the `0xSero/deepseek-v4-flash-0731-spark` build (3.0 bpw EXL3) via the `s
 - Two upstream kernel backports applied as read-only bind-mounts (see [Backports](#backports)).
 - Weights download once into a **shared network folder** (SSHFS), never duplicating the ~107 GB on local disk.
 
-### Measured results (single boot, small samples — directional)
+### Measured results
 
-| Change | Before | After | Delta |
-|---|---|---|---|
-| cuDAG capture 6 → 24, agg decode 4× short ctx | 35.4 tok/s | **77.9 tok/s** | **+120%** |
-| cuDAG capture 6 → 24, agg decode 4× long ctx | 22.5 tok/s | **43.2 tok/s** | **+92%** |
-| KV pool tokens | 140,424 | **180,695** | **+26%** |
-
-Methodology caveat: the decode numbers include time-to-first-token and are single warm-up runs on a shared desktop workload; treat as directional, not a benchmark.
+| Metric | Value |
+|---|---|
+| Decode tok/s (structured) — `start.sh`, 330k context | **44–47 tok/s** |
+| Decode tok/s (structured) — `start-180k.sh`, 180k context | **44–47 tok/s** |
+| KV cache pool | **330k tokens** (`start.sh`) · **180k tokens** (`start-180k.sh`) |
 
 ## Requirements
 
