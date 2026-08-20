@@ -91,9 +91,7 @@ opposite goals:
   request at a time) and uses `restart: on-failure:1` so a failed boot **stops
   after one failure** and can never death-spiral the host.
 - **`start-180k.sh` — concurrency over depth.** The stock **584-byte FP8-compat**
-  KV records (~181k-token pool) keep `MAX_MODEL_LEN=180000` but allow
-  **`MAX_NUM_SEQS=4`** concurrent requests sharing that pool (4×~45k, 2×~90k,
-  1×~180k). Legacy `restart: unless-stopped` policy. This is the original
+  KV records. Legacy `restart: unless-stopped` policy. This is the original
   launcher, kept for compatibility.
 
 | | `start.sh` (**default**) | `start-180k.sh` (alternative) |
