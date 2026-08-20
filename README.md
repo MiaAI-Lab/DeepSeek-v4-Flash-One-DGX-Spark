@@ -31,7 +31,7 @@ Methodology caveat: the decode numbers include time-to-first-token and are singl
 - **Hardware:** one NVIDIA DGX Spark (GB10, SM121, ≥128 GiB unified memory), GPU passthrough to Docker via the NVIDIA Container Toolkit.
 - **OS:** Linux aarch64 (DGX OS). The runtime image is **aarch64-only**.
 - **Software:** Docker Engine + Compose v2, `curl`, `sshfs` + `fuse3` (auto-installed with sudo when missing; requires `user_allow_other` in `/etc/fuse.conf`).
-- **Network:** a reachable SSH user/host to hold the shared weights folder (`10.0.0.1` / user `mia` by default — change in `start.sh`). No HuggingFace login required; the repo and image are public.
+- **Network:** a reachable SSH user/host to hold the shared weights folder (`10.0.0.1` / user `mia` by default — change in `start.sh`). No HuggingFace login required; the repo and image are public. If you do hit HF rate limits or need a private repo, set the optional `HF_TOKEN` in `start.sh` (or via env / `.env`).
 
 ## Quick start
 
@@ -141,6 +141,7 @@ Served model name: `deepseek-v4-flash-0731`. API: `http://127.0.0.1:8888/v1` (Op
 | `MAX_NUM_PARTIAL_PREFILLS` | 0 | wired but currently a no-op on this fork |
 | `MAX_CUDAGRAPH_CAPTURE_SIZE` | 24 | = seqs×(k+1); 0=image default |
 | `CUDAGRAPH_CAPTURE_SIZES` | `6,12,24` | explicit capture list; 0=image default |
+| `HF_TOKEN` | *(empty)* | optional HF token — normally **not** needed (repo + image are public); set it to avoid rate limits or reach a private repo. Also honored from the environment or a local `.env` (both launchers; the set-in-file knob is in `start.sh`) |
 | `SERVED_MODEL_NAME` | `deepseek-v4-flash-0731` | id clients send as `model` |
 | `MODE` | `dspark` | fixed K5 DSpark draft |
 | `DSPARK_*` | — | draft size/experts knobs |

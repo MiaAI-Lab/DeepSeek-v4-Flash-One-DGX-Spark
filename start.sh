@@ -57,6 +57,11 @@ cd "$SCRIPT_DIR"
 # ---------------------------------------------------------------------------
 MODEL_REPO="${MODEL_REPO:-0xSero/deepseek-v4-flash-0731-spark}"
 MODEL_REVISION="${MODEL_REVISION:-22f28d32b9b29b4352eaa380ff8c2c170b2847ab}"
+# Optional HuggingFace token. The repo is public, so normally NOT needed —
+# set it only to avoid rate limits or to reach a private repo. Also honored
+# from the environment or a local .env next to compose.yml. Exported so the
+# generated compose.yml's ${HF_TOKEN:-} resolves at `docker compose up` time.
+export HF_TOKEN="${HF_TOKEN:-}"
 IMAGE_DIGEST="ghcr.io/0xsero/deepseek-v4-flash-0731-spark-sparkinfer@sha256:2e077489a83a0360952828051fe7f7a32c1801e5ce8436d85f7267583d614ff4"
 
 SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-deepseek-v4-flash-0731}"
@@ -376,7 +381,7 @@ services:
       start_period: 20m
       retries: 3
     environment:
-      # Optional token (repo is public). Set HF_TOKEN in a local .env if needed.
+      # Optional token (repo is public). Set HF_TOKEN in start.sh (or env/.env).
       HF_TOKEN: \${HF_TOKEN:-}
       HF_HOME: /hf-cache
       PORT: "${SERVING_PORT}"

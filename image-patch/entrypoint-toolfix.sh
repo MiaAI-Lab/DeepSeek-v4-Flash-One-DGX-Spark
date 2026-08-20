@@ -6,7 +6,12 @@
 # (pip would otherwise downgrade it as a side effect).
 set -Eeuo pipefail
 PY=/opt/runtime-venv/bin/pip
-"$PY" install -q -U "xgrammar>=0.2.4"
-"$PY" install -q "transformers==5.13.1"
+# pip prints a benign "dependency resolver" ERROR to stderr even on success
+# (expected: upgrading xgrammar conflicts with vllm's pin). Capture stderr and
+# only surface it if pip actually fails.
+err="$(mktemp)"
+"$PY" install -q -U "xgrammar>=0.2.4" 2>"$err" || { cat "$err" >&2; exit 1; }
+"$PY" install -q "transformers==5.13.1" 2>"$err" || { cat "$err" >&2; exit 1; }
+rm -f "$err"
 "$PY" check >/dev/null 2>&1 || true
 echo "[toolfix] xgrammar upgraded, transformers restored" >&2
