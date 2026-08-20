@@ -41,6 +41,7 @@ Serves the `0xSero/deepseek-v4-flash-0731-spark` build (3.0 bpw EXL3) via the `s
 
 - **Hardware:** one NVIDIA DGX Spark (GB10, SM121, ≥128 GiB unified memory), GPU passthrough to Docker via the NVIDIA Container Toolkit.
 - **OS:** Linux aarch64 (DGX OS). The runtime image is **aarch64-only**.
+- **EarlyOOM:** disable it if present on the host (`sudo systemctl disable --now earlyoom`). The server intentionally holds ~94% of the 128 GiB unified memory, so a user-space OOM killer can't tell a healthy server from a leak — and may kill it mid-serve.
 - **Software:** Docker Engine + Compose v2, `curl`, `sshfs` + `fuse3` (auto-installed with sudo when missing; requires `user_allow_other` in `/etc/fuse.conf`).
 - **Network:** a reachable SSH user/host to hold the shared weights folder (`10.0.0.1` / user `mia` by default — change in `start.sh`). No HuggingFace login required; the repo and image are public. If you do hit HF rate limits or need a private repo, set the optional `HF_TOKEN` in `start.sh` (or via env / `.env`).
 
