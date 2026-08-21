@@ -179,7 +179,7 @@ Served model name: `deepseek-v4-flash-0731`. API: `http://127.0.0.1:8888/v1` (Op
 |---|---|---|
 | `MAX_MODEL_LEN` | 384000 | ~13% under the worst-observed cold-boot pool (439,622 tokens); lower it if a boot ever fails the KV check |
 | `MAX_NUM_SEQS` | 1 | `start.sh` default (single deep-context request; raise for concurrency — the pool shrinks with seq count via the hybrid cache split, e.g. 2 seqs ≈ 337k total) |
-| `MAX_NUM_BATCHED_TOKENS` | 8224 | prefill budget |
+| `MAX_NUM_BATCHED_TOKENS` | 2048 | prefill budget **and** the size of the profiler's dummy forward — vLLM subtracts that "peak activation" from the KV pool. 8224 reserves 5.30 GiB, 2048 reserves 1.39 GiB, at equal prefill throughput (997 vs 1013 tok/s on the same 60k prompt) because `LONG_PREFILL_TOKEN_THRESHOLD` already caps what a step allocates |
 | `GPU_MEMORY_UTILIZATION` | 0.94 | **max this host boots at** (see KV section) |
 | `VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS` | 0 | removes the profiler's ~0.68 GiB graph over-reservation (real usage is 0.07 GiB) → grows KV |
 | `LONG_PREFILL_TOKEN_THRESHOLD` | 1024 | caps prefill chunks; prevents decode starvation (0=off) |

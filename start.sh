@@ -64,7 +64,7 @@ IMAGE_DIGEST="ghcr.io/0xsero/deepseek-v4-flash-0731-spark-sparkinfer@sha256:2e07
 SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-deepseek-v4-flash-0731}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-384000}"   # single deep context: ~13% under the worst observed cold-boot pool (439,622 tokens, util 0.94). If a boot ever fails the "KV cache needed" check, lower this.
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-1}"          # single-request deep-context server; raise for concurrent slots (the pool itself shrinks with seq count — hybrid cache split; 2 seqs observed ~337k total, ~169k each)
-MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-8224}"
+MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-2048}"   # ALSO sizes the profiler dummy forward, whose "peak activation" vLLM subtracts from the KV pool: 8224 reserves 5.30 GiB, 2048 reserves 1.39 GiB. Prefill is unchanged (997 vs 1013 tok/s on the same 60k prompt, cached_tokens=0) because LONG_PREFILL_TOKEN_THRESHOLD=1024 already caps the per-step allocation
 MODE="${MODE:-dspark}"                 # fixed K5 DSpark speculative draft
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.94}"   # 256k needs the extra ~1.2 GiB (0.93 leaves only 6.32 GiB KV < 6.99 needed). Boot-safe BECAUSE restart: on-failure:1 can never loop: worst case one clean exit. Requires free host RAM >= 0.94*121.63 = 114.3 GiB at launch (check free -h; stop the old container first).
 VERIFY_MODEL_CHECKSUMS="${VERIFY_MODEL_CHECKSUMS:-1}"
