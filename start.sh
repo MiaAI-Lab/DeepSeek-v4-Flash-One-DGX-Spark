@@ -6,9 +6,7 @@
 # │ DEEP-CONTEXT VARIANT — 334k single-request (validated 2026-08-20)          │
 # │ Native 432 B NVFP4 KV records + util 0.94 → 337,841-token pool with        │
 # │ DSpark speculative decoding healthy (acceptance ~0.65/0.44/0.31/0.17/0.07) │
-# │   * logs into ./compose.yml (NEVER touches ./compose-180k.yaml)            │
-# │   * the running server keeps serving; only run this when you want to       │
-# │     swap to the 256k config (docker compose up -d recreates in place)      │
+# │   * the project's only launcher; writes ./compose.yml                     │
 # └──────────────────────────────────────────────────────────────────────────┘
 #
 
@@ -24,7 +22,7 @@
 # The runtime image is aarch64-only and needs the NVIDIA Container Toolkit.
 #
 # Usage:
-#   ./start.sh              # start 256k config (mounts share only in remote mode) + wait for /health
+#   ./start.sh              # start deep-context config (mounts share only in remote mode) + wait for /health
 #   ./start.sh --no-wait    # start without waiting for /health
 #   ./start.sh mount        # mount the shared folder (no-op in local mode)
 #   ./start.sh unmount      # unmount the shared folder
@@ -38,9 +36,8 @@
 #   ./start.sh help
 #
 # NOTE: this writes compose.yml and exports COMPOSE_FILE accordingly.
-# It shares the same compose project name as start.sh, so once run, docker
-# compose up -d recreates the SAME container with the 256k config. The live
-# server keeps running until you actually invoke this script.
+# compose.yml is regenerated on every start, so the live server keeps running
+# until you actually invoke this script.
 #
 set -Eeuo pipefail
 

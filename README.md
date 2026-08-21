@@ -11,7 +11,7 @@ Single-node launcher for **DeepSeek V4 Flash 0731 (EXL3/ExLlamaV3)** with DSpark
 
 Serves the `0xSero/deepseek-v4-flash-0731-spark` build (3.0 bpw EXL3) via the `sparkinfer` (formerly `b12x`) kernel stack — a complete, self-contained Docker recipe tuned for speed and KV-cache headroom on a single device.
 
-> ⚙️ **Defaults changed (2026-08-20):** the default launcher `start.sh` now serves the **deep-context NVFP4 config** — `KV_RECORD=stock432` (native 432-byte records), `GPU_MEMORY_UTILIZATION=0.94`, `MAX_MODEL_LEN=334000`, `MAX_NUM_SEQS=1`, DSpark K5 healthy → **337,841-token KV pool** (a 255,400-token context served live). The prior 180k/584-byte setup lives on as `start-180k.sh` (writes `compose-180k.yaml`; default `start.sh` writes `compose.yml`). The NVFP4 dual-cache prefill bugs behind the old either/or are fixed — full story in the internal postmortem (kept local, not in this repo).
+> ⚙️ **Defaults changed (2026-08-20):** the launcher `start.sh` serves the **deep-context NVFP4 config** — `KV_RECORD=stock432` (native 432-byte records), `GPU_MEMORY_UTILIZATION=0.94`, `MAX_MODEL_LEN=334000`, `MAX_NUM_SEQS=1`, DSpark K5 healthy → **337,841-token KV pool** (a 255,400-token context served live). The NVFP4 dual-cache prefill bugs behind the old either/or are fixed — full story in the internal postmortem (kept local, not in this repo).
 
 ---
 
@@ -32,8 +32,7 @@ Serves the `0xSero/deepseek-v4-flash-0731-spark` build (3.0 bpw EXL3) via the `s
 | Metric | Value |
 |---|---|
 | Decode tok/s (structured) — `start.sh`, 330k context | **44–47 tok/s** |
-| Decode tok/s (structured) — `start-180k.sh`, 180k context | **44–47 tok/s** |
-| KV cache pool | **330k tokens** (`start.sh`) · **180k tokens** (`start-180k.sh`) |
+| KV cache pool | **330k tokens** |
 
 ---
 
@@ -50,30 +49,26 @@ Serves the `0xSero/deepseek-v4-flash-0731-spark` build (3.0 bpw EXL3) via the `s
 ## Quick start
 
 ```bash
-./start.sh      # DEFAULT / recommended: deep-context NVFP4 (334k, DSpark) — writes compose.yml
-./start-180k.sh # ALTERNATIVE: 180k, up to 4 concurrent requests, stock 584-byte records — writes compose-180k.yaml
+./start.sh      # start: deep-context NVFP4 (334k, DSpark) — writes compose.yml
 ./start.sh --no-wait   # start without waiting
 ```
 
 First boot is intentionally long: pulls the image, downloads ~107 GB of weights locally (into `./hf-hub`), coalesces TP4→TP1 losslessly, builds the K64 draft, and captures CUDA graphs. It is marked `healthy` only when the OpenAI-compatible endpoint responds.
 
-> ℹ️ **No compose files are shipped in this repo** — `compose.yml` (from
-> `start.sh`) and `compose-180k.yaml` (from `start-180k.sh`) are generated
-> automatically by their launcher on the first run and rewritten on every
-> launch. They are gitignored, since the real config lives in the launchers.
-> To produce them without starting anything: `./start.sh compose-gen` (the
-> 180k variant has no gen-only subcommand; its file is written when
-> `./start-180k.sh` runs). Do not hand-edit them.
+> ℹ️ **No compose file is shipped in this repo** — `compose.yml` is generated
+> by `start.sh` on the first run and rewritten on every launch. It is
+> gitignored, since the real config lives in the launcher. To produce it
+> without starting anything: `./start.sh compose-gen`. Do not hand-edit it.
 
 ### Weights bootstrap — fully local
 
 Everything downloads **on this machine**; no remote host is involved in the
 default path:
 
-- **Default:** `./start.sh` (and `./start-180k.sh`) auto-download on first
-  boot into the local HF cache root `./hf-hub` and coalesce into
-  `./data/tp1`. The losslessly coalesced serving checkpoint, the K64 draft,
-  and the runtime caches all live on this machine.
+- **Default:** `./start.sh` auto-downloads on first boot into the local HF
+  cache root `./hf-hub` and coalesces into `./data/tp1`. The losslessly
+  coalesced serving checkpoint, the K64 draft, and the runtime caches all
+  live on this machine.
 - **Optional offline prep:** `./download.sh` performs the same
 download+coalesce+verify standalone (also fully local). Once
   `./data/tp1/rank-sliced-tp1-manifest.json` exists, boot skips the
@@ -87,44 +82,18 @@ download+coalesce+verify standalone (also fully local). Once
 
 ---
 
-## Choosing a launcher: `start.sh` (default) vs `start-180k.sh` (alternative)
+## Launch notes
 
-Both launchers drive the **same** stack — identical pinned weights, image, lossless
-to-TP1 coalescing, K64 DSpark draft, and OpenAI-compatible endpoint. They differ
-only in the serving configuration they generate, and **you can only run one at a
-time**: both use the same compose project name, so whichever launcher runs last
-recreates the container in *its* config. The difference comes down to two
-opposite goals:
+The only hard requirement is **free host RAM ≥ 114.3 GiB at launch** (0.94 ×
+121.63 GiB; this UMA machine shares the 121.63 GiB between GPU and host) —
+stop an old container first and check `free -h` before launching. If a boot
+ever fails (KV check or otherwise), it stops after one failure (`restart:
+on-failure:1` — it can never death-spiral the host); lower `MAX_MODEL_LEN` a
+notch and retry once, don't launch repeatedly while the host is loaded.
 
-- **`start.sh` — deep single-request context (the default).** Native **432-byte NVFP4**
-  KV records give a **337,841-token KV pool** and `MAX_MODEL_LEN=334000`, so a
-  single request can span a very long context. It runs `MAX_NUM_SEQS=1` (one
-  request at a time) and uses `restart: on-failure:1` so a failed boot **stops
-  after one failure** and can never death-spiral the host.
-- **`start-180k.sh` — concurrency over depth.** The stock **584-byte FP8-compat**
-  KV records. Legacy `restart: unless-stopped` policy. This is the original
-  launcher, kept for compatibility.
-
-| | `start.sh` (**default**) | `start-180k.sh` (alternative) |
-|---|---|---|
-| Goal | one very-long request | several concurrent shorter requests |
-| KV record layout | native **432 B NVFP4** (`KV_RECORD=stock432`) | 584 B FP8-compat padded (stock semantics) |
-| KV pool (validated) | **337,841 tokens** | ~181k tokens |
-| `MAX_MODEL_LEN` default | **334000** | 180000 |
-| `MAX_NUM_SEQS` default | 1 | 4 |
-| Boot safety | `restart: on-failure:1` — single-clean-failure, never loops | `restart: unless-stopped` (legacy) |
-| Compose | `compose.yml` + `COMPOSE_FILE` | `compose-180k.yaml` |
-| Entrypoint | patched `entrypoint-256k.sh` (honors NVFP4 envs) | `entrypoint-no-download.sh` gates download |
-| `AUTO_DOWNLOAD` | image default (always on) | env-gated (`AUTO_DOWNLOAD=0` needs `./download.sh`) |
-| History | formerly `start-256k.sh` | formerly `start.sh` |
-
-**Start with `start.sh`.** Its only hard requirement is **free host RAM ≥ 114.3 GiB at
-launch** (0.94 × 121.63 GiB; this UMA machine shares the 121.63 GiB between GPU and
-host) — stop the old container first and check `free -h` before launching. If a
-boot ever fails (KV check or otherwise), it stops after one failure; lower
-`MAX_MODEL_LEN` a notch and retry once — don't launch repeatedly while the host
-is loaded. Choose `start-180k.sh` only if you specifically need concurrency; each
-request is then capped at 180k and the pool is shared.
+Concurrency is a single env override away: `MAX_NUM_SEQS=4 ./start.sh` shares
+the 337,841-token pool across up to four slots (~84k each). The rest of the
+launcher is the deep-context config described in this README.
 
 ### Try it
 
@@ -144,10 +113,8 @@ Served model name: `deepseek-v4-flash-0731`. API: `http://127.0.0.1:8888/v1` (Op
 
 | Path | Purpose |
 |---|---|
-| `start.sh` | **Default launcher** (deep-context NVFP4, 334k/1-seq, DSpark) — all tunables live here; **regenerates** `compose.yml` (do not edit that file directly) |
-| `start-180k.sh` | **Alternative** launcher: 180k, 4 concurrent seqs, 584-byte records (legacy semantics); regenerates `compose-180k.yaml` |
-| `compose.yml` | Generated by `start.sh` (default compose name); pinned image + mounts + runtime env |
-| `compose-180k.yaml` | Generated by `start-180k.sh`; pinned image + mounts + runtime env |
+| `start.sh` | **Launcher** (deep-context NVFP4, 334k/1-seq, DSpark) — all tunables live here; **regenerates** `compose.yml` (do not edit that file directly) |
+| `compose.yml` | Generated by `start.sh`; pinned image + mounts + runtime env |
 | `image-patch/` | Read-only bind-mount overrides (coalescer + kernel backports) |
 | `data/` | Serving checkpoint (`tp1/`), K64 draft, caches (on local disk) |
 | `cache/` | Runtime JIT/kernel caches (CuTeDSL, TileLang, TRITON, vLLM) |
@@ -172,7 +139,7 @@ Served model name: `deepseek-v4-flash-0731`. API: `http://127.0.0.1:8888/v1` (Op
 
 | Variable | Default | Notes |
 |---|---|---|
-| `MAX_MODEL_LEN` | 334000 | `start.sh` default: ~1.1% under the validated 337,841-token NVFP4 pool; lower it if a boot ever fails the KV check (180k variant: 180000) |
+| `MAX_MODEL_LEN` | 334000 | ~1.1% under the validated 337,841-token NVFP4 pool; lower it if a boot ever fails the KV check |
 | `MAX_NUM_SEQS` | 1 | `start.sh` default (single deep-context request; raise to share the pool: 2×169k, 3×113k, 4×84k) |
 | `MAX_NUM_BATCHED_TOKENS` | 8224 | prefill budget |
 | `GPU_MEMORY_UTILIZATION` | 0.94 | **max this host boots at** (see KV section) |
@@ -181,7 +148,7 @@ Served model name: `deepseek-v4-flash-0731`. API: `http://127.0.0.1:8888/v1` (Op
 | `MAX_NUM_PARTIAL_PREFILLS` | 0 | wired but currently a no-op on this fork |
 | `MAX_CUDAGRAPH_CAPTURE_SIZE` | 24 | = seqs×(k+1); 0=image default |
 | `CUDAGRAPH_CAPTURE_SIZES` | `6,12,24` | explicit capture list; 0=image default |
-| `HF_TOKEN` | *(empty)* | optional HF token — normally **not** needed (repo + image are public); set it to avoid rate limits or reach a private repo. Also honored from the environment or a local `.env` (both launchers; the set-in-file knob is in `start.sh`) |
+| `HF_TOKEN` | *(empty)* | optional HF token — normally **not** needed (repo + image are public); set it to avoid rate limits or reach a private repo. Also honored from the environment or a local `.env` (the set-in-file knob is in `start.sh`) |
 | `SERVED_MODEL_NAME` | `deepseek-v4-flash-0731` | id clients send as `model` |
 | `MODE` | `dspark` | fixed K5 DSpark draft |
 | `DSPARK_*` | — | draft size/experts knobs |
@@ -204,7 +171,7 @@ Two record layouts are switchable with `KV_RECORD` on `start.sh`:
 - **`stock432` (default, fixed 2026-08-20):** native 432-byte NVFP4 records → **337,841-token pool** at util 0.94 (255,400-token context served, DSpark acceptance 0.65–0.92 / 0.44 / 0.29–0.46 / 0.19–0.42 / 0.12). The dual-cache prefill path had four NVFP4 bugs (fixed via `image-patch/sparkinfer/` bind mounts) — see the internal postmortem (kept local, not in this repo).
 - **`padded`:** 584-byte FP8-compat records (stock semantics, ~270k pool at 256k) — the fallback.
 
-This host reports only ~114.5 GiB of 121.63 as free (the unified-memory display/desktop holds ~7 GiB), so `GPU_MEMORY_UTILIZATION` above **~0.940 fails to boot** — the vendor's recipe value 0.9465 does **not** start here. The numbers below are the historical sweep of the **584-byte FP8-compat layout used by `start-180k.sh`**; the 432-byte NVFP4 layout used by the default `start.sh` reaches **337,841 tokens** (see the intro). The `start-180k.sh` ceiling on this hardware:
+This host reports only ~114.5 GiB of 121.63 as free (the unified-memory display/desktop holds ~7 GiB), so `GPU_MEMORY_UTILIZATION` above **~0.940 fails to boot** — the vendor's recipe value 0.9465 does **not** start here. The numbers below are the historical sweep of the **584-byte FP8-compat padded layout** (`KV_RECORD=padded`); the default **432-byte NVFP4 layout** (`KV_RECORD=stock432`) reaches **337,841 tokens** (see the intro). The padded-layout ceiling on this hardware:
 
 | Config | KV pool | Notes |
 |---|---:|---|
@@ -259,7 +226,7 @@ The server exposes an OpenAI-compatible API on `http://127.0.0.1:8888/v1`. Recom
 |---|---|---|
 | Base URL | `http://127.0.0.1:8888/v1` | |
 | Model id | `deepseek-v4-flash-0731` | sent as `model` |
-| Context window | up to 334000 (`start.sh` default) | actual ceiling is the KV pool: **337,841 tokens** (deep-context). For the `start-180k.sh` variant use 180000 |
+| Context window | up to 334000 (`start.sh` default) | actual ceiling is the KV pool: **337,841 tokens** |
 | Max output tokens | e.g. 32768 | anything ≤ `MAX_MODEL_LEN` is accepted |
 | Tokenizer | DSV4 (`deepseek_v4`) | enabled server-side |
 | Reasoning | **thinking ON, effort `max` by default** | this is the server-side default; send `chat_template_kwargs` to override per request (thinking `false`, or `reasoning_effort` low/high/max) |

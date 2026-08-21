@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 #
 # Stop the DeepSeek V4 Flash 0731 Spark server (container), preserving
-# ./data, ./cache and all weights on the shared folder.
+# ./data, ./cache and all weights.
 #
 # This gracefully stops the running container via `docker compose stop`
-# (SIGTERM to vLLM). Restart later with: ./start.sh   (or ./start-180k.sh for
-# the 180k variant).
+# (SIGTERM to vLLM). Restart later with: ./start.sh
 #
 # Usage:
 #   ./stop.sh              # stop the running container
@@ -13,13 +12,7 @@
 #
 set -Eeuo pipefail
 cd "$(dirname "$0")"
-
-# Prefer the 256k variant's compose file when its container is the one running.
-if [ -f compose.yml ] && docker compose -f compose.yml ps --status running --quiet 2>/dev/null | grep -q .; then
-  COMPOSE_FILE=compose.yml
-else
-  COMPOSE_FILE=compose-180k.yaml
-fi
+COMPOSE_FILE=compose.yml
 
 case "${1:-}" in
   -f|--force|down)
