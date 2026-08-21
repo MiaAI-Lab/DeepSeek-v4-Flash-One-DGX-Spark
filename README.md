@@ -179,7 +179,7 @@ Served model name: `deepseek-v4-flash-0731`. API: `http://127.0.0.1:8888/v1` (Op
 |---|---|---|
 | `MAX_MODEL_LEN` | 384000 | ~13% under the worst-observed cold-boot pool (439,622 tokens); lower it if a boot ever fails the KV check |
 | `MAX_NUM_SEQS` | 1 | `start.sh` default (single deep-context request; raise for concurrency — the pool shrinks with seq count via the hybrid cache split, e.g. 2 seqs ≈ 337k total) |
-| `MAX_NUM_BATCHED_TOKENS` | 8224 | prefill budget |
+| `MAX_NUM_BATCHED_TOKENS` | 8224 | prefill budget **and** b12x MLA workspace size (locked after warmup — **do not lower**; see [below](#max_num_batched_tokens-is-also-the-locked-mla-workspace)) |
 | `GPU_MEMORY_UTILIZATION` | 0.94 | **max this host boots at** (see KV section) |
 | `VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS` | 0 | removes the profiler's ~0.68 GiB graph over-reservation (real usage is 0.07 GiB) → grows KV |
 | `LONG_PREFILL_TOKEN_THRESHOLD` | 1024 | caps prefill chunks; prevents decode starvation (0=off) |
@@ -199,6 +199,17 @@ Served model name: `deepseek-v4-flash-0731`. API: `http://127.0.0.1:8888/v1` (Op
 | `SERVING_HOST` | `0.0.0.0` | bind address (passed to vLLM as `HOST`). `0.0.0.0` = reachable from the LAN, `127.0.0.1` = local-only, or pin one interface (`192.168.1.50`, `::`). **No auth sits in front of this port** — widen it only on a trusted network |
 
 Every tunable is an environment variable override: `GPU_MEMORY_UTILIZATION=0.94 ./start.sh`.
+
+<a id="max_num_batched_tokens-is-also-the-locked-mla-workspace"></a>
+
+`MAX_NUM_BATCHED_TOKENS` is load-bearing twice. vLLM sizes the profiled activation peak (and therefore leftover KV) from it, **and** warmup captures the largest b12x compressed-MLA scratch, then `lock_workspace()` freezes that size. Lowering it to recover KV can still boot and even match prefill on a cold prompt, then crash later — typically a warm prefix-cache turn that attends a large width immediately:
+
+```
+AssertionError: Workspace is locked but allocation from 'b12x.py:…:_run_compressed_mla'
+requires … MB, current size is … MB. Workspace growth is not allowed after locking.
+```
+
+Leave it at **8224**. Do not treat it as a free memory knob. (Reported in [#4](https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-One-DGX-Spark/issues/4); a 2048 trial recovered ~3.9 GiB of profiled peak but then hit the locked-workspace assertion under real traffic.)
 
 ---
 
