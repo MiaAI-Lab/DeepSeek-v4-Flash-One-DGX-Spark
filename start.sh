@@ -3,8 +3,8 @@
 # DeepSeek V4 Flash 0731 (EXL3/ExLlamaV3) on one NVIDIA DGX Spark.
 #
 # ┌──────────────────────────────────────────────────────────────────────────┐
-# │ DEEP-CONTEXT VARIANT — 334k single-request (validated 2026-08-20)          │
-# │ Native 432 B NVFP4 KV records + util 0.94 → 337,841-token pool with        │
+# │ DEEP-CONTEXT VARIANT — 384k single-request (validated 2026-08-21)          │
+# │ Native 432 B NVFP4 KV records + util 0.94 → 439,622-token pool with        │
 # │ DSpark speculative decoding healthy (acceptance ~0.65/0.44/0.31/0.17/0.07) │
 # │   * the project's only launcher; writes ./compose.yml                      │
 # └──────────────────────────────────────────────────────────────────────────┘
@@ -62,8 +62,8 @@ export HF_TOKEN="${HF_TOKEN:-}"
 IMAGE_DIGEST="ghcr.io/0xsero/deepseek-v4-flash-0731-spark-sparkinfer@sha256:2e077489a83a0360952828051fe7f7a32c1801e5ce8436d85f7267583d614ff4"
 
 SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-deepseek-v4-flash-0731}"
-MAX_MODEL_LEN="${MAX_MODEL_LEN:-334000}"   # single deep context: ~1.1% under the validated 337,841-token pool (util 0.94). If a boot ever fails the "KV cache needed" check, lower this.
-MAX_NUM_SEQS="${MAX_NUM_SEQS:-1}"          # single-request deep-context server; raise for concurrent slots (contexts share the 337,841-token pool: 2x~169k, 3x~113k, 4x~84k)
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-384000}"   # single deep context: ~13% under the worst observed cold-boot pool (439,622 tokens, util 0.94). If a boot ever fails the "KV cache needed" check, lower this.
+MAX_NUM_SEQS="${MAX_NUM_SEQS:-1}"          # single-request deep-context server; raise for concurrent slots (the pool itself shrinks with seq count — hybrid cache split; 2 seqs observed ~337k total, ~169k each)
 MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-8224}"
 MODE="${MODE:-dspark}"                 # fixed K5 DSpark speculative draft
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.94}"   # 256k needs the extra ~1.2 GiB (0.93 leaves only 6.32 GiB KV < 6.99 needed). Boot-safe BECAUSE restart: on-failure:1 can never loop: worst case one clean exit. Requires free host RAM >= 0.94*121.63 = 114.3 GiB at launch (check free -h; stop the old container first).
@@ -74,7 +74,7 @@ VERIFY_MODEL_CHECKSUMS="${VERIFY_MODEL_CHECKSUMS:-1}"
 # (VLLM_DSV4_PADDED_NVFP4=1). Smaller native NVFP4 records give +35%..+59%
 # more KV tokens with no weight/util change:
 #   KV_RECORD=padded   -> 584 B (stock semantics, fallback if NVFP4 breaks)
-#   KV_RECORD=stock432 -> 432 B native NVFP4  (337,841-token pool at util 0.94;
+#   KV_RECORD=stock432 -> 432 B native NVFP4  (439,622-token pool at util 0.94;
 #                        prefill/dual-cache bugs FIXED 2026-08-20 — see
 #                        internal postmortem, not in this repo)  [default: max context]
 #   KV_RECORD=rope368  -> 368 B FP8-RoPE (GLM-only knob; on DSV4 == stock432)

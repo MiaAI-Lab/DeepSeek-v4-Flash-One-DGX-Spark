@@ -11,7 +11,7 @@ Single-node launcher for **DeepSeek V4 Flash 0731 (EXL3/ExLlamaV3)** with DSpark
 
 Serves the `0xSero/deepseek-v4-flash-0731-spark` build (3.0 bpw EXL3) via the `sparkinfer` (formerly `b12x`) kernel stack — a complete, self-contained Docker recipe tuned for speed and KV-cache headroom on a single device.
 
-> ⚙️ **Defaults changed (2026-08-20):** the launcher `start.sh` serves the **deep-context NVFP4 config** — `KV_RECORD=stock432` (native 432-byte records), `GPU_MEMORY_UTILIZATION=0.94`, `MAX_MODEL_LEN=334000`, `MAX_NUM_SEQS=1`, DSpark K5 healthy → **337,841-token KV pool** (a 255,400-token context served live). The NVFP4 dual-cache prefill bugs behind the old either/or are fixed — full story in the internal postmortem (kept local, not in this repo).
+> ⚙️ **Defaults changed (2026-08-21):** the launcher `start.sh` serves the **deep-context NVFP4 config** — `KV_RECORD=stock432` (native 432-byte records), `GPU_MEMORY_UTILIZATION=0.94`, `MAX_MODEL_LEN=384000`, `MAX_NUM_SEQS=1`, DSpark K5 healthy → **439,622-token KV pool** (a 370,104-token context stress-tested with exact needle recall — see [Stress test](#stress-test)). The NVFP4 dual-cache prefill bugs behind the old either/or are fixed — full story in the internal postmortem (kept local, not in this repo).
 
 ---
 
@@ -32,7 +32,43 @@ Serves the `0xSero/deepseek-v4-flash-0731-spark` build (3.0 bpw EXL3) via the `s
 | Metric | Value |
 |---|---|
 | Decode tok/s (structured) — `start.sh`, 330k context | **44–47 tok/s** |
-| KV cache pool | **337,841 tokens** |
+| KV cache pool | **439,622 tokens** (boot-dependent — see [Stress test](#stress-test)) |
+| Stress test — 320k & 370k context | exact needle recall, **0 preemptions** — see [Stress test](#stress-test) |
+
+---
+
+## Stress test
+
+Two needle-in-a-haystack runs on 2026-08-21, both on fresh boots of the deep-context config (`MAX_NUM_SEQS=1`, `KV_RECORD=stock432`, util 0.94), each at ~96% of that boot's `MAX_MODEL_LEN`.
+
+**Method (both runs):** a single large user prompt of random-word filler, generated so prefix caching cannot deduplicate it (`cached_tokens: 0` — every token fresh KV); a secret passphrase planted at token ~20; a recall question at the very end; `temperature 0`, thinking disabled via `chat_template_kwargs`, `max_completion_tokens 128`.
+
+| | Run 1 | Run 2 |
+|---|---|---|
+| `MAX_MODEL_LEN` | 334,000 | 384,000 (now the default) |
+| KV pool (that boot) | 402,334 tokens (1.20×) | 439,622 tokens (1.14×, cold boot) |
+| Prompt size | 320,037 tokens (1.33 MB) | 370,104 tokens (1.54 MB) |
+| Share of pool | ~80% | ~84% |
+| Needle recall from token ~20 | ✅ exact — `XQ-7741-BLUE` | ✅ exact — `ZK-9931-AMBER` |
+| `finish_reason` | `stop` (clean, not truncated) | `stop` (clean, not truncated) |
+| Preemptions | **0** | **0** |
+| End-to-end | 517 s — prefill ~630 tok/s effective | 594 s — prefill ~625 tok/s effective |
+| Server after | healthy, `/health` 200, KV usage back to 0% | healthy, `/health` 200, KV usage back to 0% |
+
+Prefill throughput decays with depth — ~1,024 tok/s at the start of a request, ~350–614 tok/s past 300k accumulated — so a full-length 384k prefill takes ~10 minutes end-to-end.
+
+These runs are the deepest exercise to date of the NVFP4 dual-cache prefill path fixed in `image-patch/sparkinfer/` — the pre-fix kernel NaN'd on any prompt ≥ 7 tokens; these tests pushed 320k and 370k tokens through it with exact recall.
+
+<details>
+<summary><b>Why the pool size differs between boots</b></summary>
+
+The pool is a leftover-derived number — (util budget) − weights − profiled activation peak − non-torch overhead — and it moves between boots. Observed on this host: **337,841** (2-seq boot) → **402,334 → 430,909 → 440,461** (334k/1-seq) → **439,622** (384k/1-seq, cold). Two effects dominate:
+
+1. **The hybrid cache split.** The model keeps 128-token sliding-window layers alongside full-depth global layers, and the split of KV bytes shifts with `MAX_NUM_SEQS`. Single-sequence boots route more of the budget into the global cache that defines the reported pool (337,841 at 2 seqs → 402k+ at 1 seq from comparable bytes).
+2. **Cold vs. warm JIT.** A boot that compiles fresh kernels during warmup leaves less memory free at KV-sizing time than a warm boot hitting the on-disk JIT caches (observed swing: ~0.6 GiB ≈ 28k tokens).
+
+The worst boot observed still clears `MAX_MODEL_LEN` with ≥ 1.14× headroom; a truly bad boot trips the boot-time KV check and stops cleanly (`restart: on-failure:1`).
+</details>
 
 ---
 
@@ -49,7 +85,7 @@ Serves the `0xSero/deepseek-v4-flash-0731-spark` build (3.0 bpw EXL3) via the `s
 ## Quick start
 
 ```bash
-./start.sh      # start: deep-context NVFP4 (334k, DSpark) — writes compose.yml
+./start.sh      # start: deep-context NVFP4 (384k, DSpark) — writes compose.yml
 ./start.sh --no-wait   # start without waiting
 ```
 
@@ -91,9 +127,11 @@ ever fails (KV check or otherwise), it stops after one failure (`restart:
 on-failure:1` — it can never death-spiral the host); lower `MAX_MODEL_LEN` a
 notch and retry once, don't launch repeatedly while the host is loaded.
 
-Concurrency is a single env override away: `MAX_NUM_SEQS=4 ./start.sh` shares
-the 337,841-token pool across up to four slots (~84k each). The rest of the
-launcher is the deep-context config described in this README.
+Concurrency is a single env override away: `MAX_NUM_SEQS=4 ./start.sh`. Note
+that the pool itself shrinks at higher sequence counts (the hybrid cache split
+shifts — a 2-seq boot observed ~337k total, ≈169k per slot), so depth trades
+against concurrency. The rest of the launcher is the deep-context config
+described in this README.
 
 ### Try it
 
@@ -113,7 +151,7 @@ Served model name: `deepseek-v4-flash-0731`. API: `http://127.0.0.1:8888/v1` (Op
 
 | Path | Purpose |
 |---|---|
-| `start.sh` | **Launcher** (deep-context NVFP4, 334k/1-seq, DSpark) — all tunables live here; **regenerates** `compose.yml` (do not edit that file directly) |
+| `start.sh` | **Launcher** (deep-context NVFP4, 384k/1-seq, DSpark) — all tunables live here; **regenerates** `compose.yml` (do not edit that file directly) |
 | `compose.yml` | Generated by `start.sh`; pinned image + mounts + runtime env |
 | `image-patch/` | Read-only bind-mount overrides (coalescer + kernel backports) |
 | `data/` | Serving checkpoint (`tp1/`), K64 draft, caches (on local disk) |
@@ -139,8 +177,8 @@ Served model name: `deepseek-v4-flash-0731`. API: `http://127.0.0.1:8888/v1` (Op
 
 | Variable | Default | Notes |
 |---|---|---|
-| `MAX_MODEL_LEN` | 334000 | ~1.1% under the validated 337,841-token NVFP4 pool; lower it if a boot ever fails the KV check |
-| `MAX_NUM_SEQS` | 1 | `start.sh` default (single deep-context request; raise to share the pool: 2×169k, 3×113k, 4×84k) |
+| `MAX_MODEL_LEN` | 384000 | ~13% under the worst-observed cold-boot pool (439,622 tokens); lower it if a boot ever fails the KV check |
+| `MAX_NUM_SEQS` | 1 | `start.sh` default (single deep-context request; raise for concurrency — the pool shrinks with seq count via the hybrid cache split, e.g. 2 seqs ≈ 337k total) |
 | `MAX_NUM_BATCHED_TOKENS` | 8224 | prefill budget |
 | `GPU_MEMORY_UTILIZATION` | 0.94 | **max this host boots at** (see KV section) |
 | `VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS` | 0 | removes the profiler's ~0.68 GiB graph over-reservation (real usage is 0.07 GiB) → grows KV |
@@ -168,10 +206,10 @@ Every tunable is an environment variable override: `GPU_MEMORY_UTILIZATION=0.94 
 
 Two record layouts are switchable with `KV_RECORD` on `start.sh`:
 
-- **`stock432` (default, fixed 2026-08-20):** native 432-byte NVFP4 records → **337,841-token pool** at util 0.94 (255,400-token context served, DSpark acceptance 0.65–0.92 / 0.44 / 0.29–0.46 / 0.19–0.42 / 0.12). The dual-cache prefill path had four NVFP4 bugs (fixed via `image-patch/sparkinfer/` bind mounts) — see the internal postmortem (kept local, not in this repo).
+- **`stock432` (default, fixed 2026-08-20):** native 432-byte NVFP4 records → **439,622-token pool** at util 0.94 on the 384k/1-seq config (370,104-token context stress-tested, DSpark acceptance 0.65–0.92 / 0.44 / 0.29–0.46 / 0.19–0.42 / 0.12). The dual-cache prefill path had four NVFP4 bugs (fixed via `image-patch/sparkinfer/` bind mounts) — see the internal postmortem (kept local, not in this repo).
 - **`padded`:** 584-byte FP8-compat records (stock semantics, ~270k pool at 256k) — the fallback.
 
-This host reports only ~114.5 GiB of 121.63 as free (the unified-memory display/desktop holds ~7 GiB), so `GPU_MEMORY_UTILIZATION` above **~0.940 fails to boot** — the vendor's recipe value 0.9465 does **not** start here. The numbers below are the historical sweep of the **584-byte FP8-compat padded layout** (`KV_RECORD=padded`); the default **432-byte NVFP4 layout** (`KV_RECORD=stock432`) reaches **337,841 tokens** (see the intro). The padded-layout ceiling on this hardware:
+This host reports only ~114.5 GiB of 121.63 as free (the unified-memory display/desktop holds ~7 GiB), so `GPU_MEMORY_UTILIZATION` above **~0.940 fails to boot** — the vendor's recipe value 0.9465 does **not** start here. The numbers below are the historical sweep of the **584-byte FP8-compat padded layout** (`KV_RECORD=padded`); the default **432-byte NVFP4 layout** (`KV_RECORD=stock432`) reaches **~440k tokens** (439,622 observed cold on the 384k/1-seq config; see the intro). The padded-layout ceiling on this hardware:
 
 | Config | KV pool | Notes |
 |---|---:|---|
@@ -226,7 +264,7 @@ The server exposes an OpenAI-compatible API on `http://127.0.0.1:8888/v1`. Recom
 |---|---|---|
 | Base URL | `http://127.0.0.1:8888/v1` | |
 | Model id | `deepseek-v4-flash-0731` | sent as `model` |
-| Context window | up to 334000 (`start.sh` default) | actual ceiling is the KV pool: **337,841 tokens** |
+| Context window | up to 384000 (`start.sh` default) | actual ceiling is the KV pool: **439,622 tokens** (boot-dependent) |
 | Max output tokens | e.g. 32768 | anything ≤ `MAX_MODEL_LEN` is accepted |
 | Tokenizer | DSV4 (`deepseek_v4`) | enabled server-side |
 | Reasoning | **thinking ON, effort `max` by default** | this is the server-side default; send `chat_template_kwargs` to override per request (thinking `false`, or `reasoning_effort` low/high/max) |
@@ -247,10 +285,10 @@ The pi coding agent can target this server directly. Model config (this exact en
   "models": [
     {
       "id": "deepseek-v4-flash-0731",
-      "name": "DeepSeek V4 Flash 0731 Spark · DSpark · 334k (local Spark)",
+      "name": "DeepSeek V4 Flash 0731 Spark · DSpark · 384k (local Spark)",
       "reasoning": true,
       "input": ["text"],
-      "contextWindow": 334000,
+      "contextWindow": 384000,
       "maxTokens": 32768,
       "thinkingLevelMap": {
         "minimal": null, "low": null, "medium": null,
