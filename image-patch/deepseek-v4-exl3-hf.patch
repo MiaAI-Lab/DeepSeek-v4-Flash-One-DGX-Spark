@@ -1,0 +1,49 @@
+--- a/vllm/models/deepseek_v4/nvidia/model.py
++++ b/vllm/models/deepseek_v4/nvidia/model.py
+@@ -744,6 +744,7 @@
+             intermediate_size=config.moe_intermediate_size,
+             renormalize=config.norm_topk_prob,
+             quant_config=quant_config,
++            ckpt_names=("w1", "w2", "w3"),
+             prefix=f"{prefix}.experts",
+             scoring_func=self.scoring_func,
+             routed_scaling_factor=self.routed_scaling_factor,
+@@ -1685,6 +1686,10 @@
+             ("attn.fused_wqa_wkv", "attn.wkv", 1),
+             ("compressor.fused_wkv_wgate", "compressor.wkv", 0),
+             ("compressor.fused_wkv_wgate", "compressor.wgate", 1),
++            *[
++                ("wo_a", f"wo_a.slice.{group_id}", group_id)
++                for group_id in range(self.config.o_groups)
++            ],
+         ]
+         params_dict = dict(self.named_parameters())
+         loaded_params: set[str] = set()
+@@ -1885,6 +1890,7 @@
+             "norm.": "model.norm.",
+             "hc_head": "model.hc_head",
+             "mtp.": "model.mtp.",
++            "head": "lm_head",
+         },
+         orig_to_new_regex=scale_regex,
+         orig_to_new_suffix={
+@@ -1939,6 +1945,11 @@
+     nn.Module, SupportsPP, SupportsEagle3, DeepseekV4MixtureOfExperts
+ ):
+     model_cls = DeepseekV4Model
++    packed_modules_mapping = {
++        "gate_up_proj": ["w1", "w3"],
++        "fused_wqa_wkv": ["wq_a", "wkv"],
++        "fused_wkv_wgate": ["wkv", "wgate"],
++    }
+ 
+     # Default mapper assumes the original FP4-expert checkpoint layout.
+     # Overridden per-instance in __init__ when expert_dtype != "fp4".
+@@ -1962,6 +1973,7 @@
+                 config.vocab_size,
+                 config.hidden_size,
+                 padding_size=vocab_padding_size,
++                quant_config=vllm_config.quant_config,
+                 prefix=maybe_prefix(prefix, "lm_head"),
+             )
+         else:

@@ -1,0 +1,13 @@
+--- a/usr/local/lib/python3.12/dist-packages/flashinfer/comm/cuda_ipc.py
++++ b/usr/local/lib/python3.12/dist-packages/flashinfer/comm/cuda_ipc.py
+@@ -50,7 +50,9 @@
+     found = False
+     with open("/proc/self/maps") as f:
+         for line in f:
+-            if lib_name in line:
++            # TileLang ships a symbol-incomplete libcudart_stub.so for link
++            # time. It is not the CUDA runtime and must not satisfy this lookup.
++            if lib_name in line and "libcudart_stub.so" not in line:
+                 found = True
+                 break
+     if not found:

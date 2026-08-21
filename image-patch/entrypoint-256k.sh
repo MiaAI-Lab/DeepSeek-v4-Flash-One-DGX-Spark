@@ -9,16 +9,34 @@ set -Eeuo pipefail
 
 model_repo=${MODEL_REPO:-0xSero/deepseek-v4-flash-0731-spark}
 model_revision=${MODEL_REVISION:-22f28d32b9b29b4352eaa380ff8c2c170b2847ab}
+model_layout=${MODEL_LAYOUT:-rank-sliced}
 source_dir=${MODEL_SOURCE_DIR:-/models/source}
 model_dir=${MODEL_PATH:-/models/tp1}
 mode=${MODE:-dspark}
 draft_dir=${SPEC_MODEL_PATH:-/models/dspark-draft-k64}
 
-if [[ ! -f "${model_dir}/rank-sliced-tp1-manifest.json" ]]; then
+case "${model_layout}" in
+  rank-sliced|hf) ;;
+  *) echo "MODEL_LAYOUT must be rank-sliced or hf; got '${model_layout}'" >&2; exit 2 ;;
+esac
+if [[ "${model_layout}" == "hf" ]]; then
+  model_dir=${source_dir}
+fi
+
+needs_download=0
+if [[ "${model_layout}" == "rank-sliced" ]]; then
+  [[ -f "${model_dir}/rank-sliced-tp1-manifest.json" ]] || needs_download=1
+else
+  [[ -f "${source_dir}/.snapshot-download-complete" && \
+     -s "${source_dir}/model.safetensors.index.json" ]] || needs_download=1
+fi
+
+if [[ "${needs_download}" == "1" ]]; then
   mkdir -p "${source_dir}" "${model_dir}"
   MODEL_REPO=${model_repo} MODEL_REVISION=${model_revision} \
     MODEL_SOURCE_DIR=${source_dir} /opt/runtime-venv/bin/python - <<'PY'
 import os
+from pathlib import Path
 from huggingface_hub import snapshot_download
 
 snapshot_download(
@@ -27,22 +45,34 @@ snapshot_download(
     local_dir=os.environ["MODEL_SOURCE_DIR"],
     token=os.environ.get("HF_TOKEN") or None,
 )
+Path(os.environ["MODEL_SOURCE_DIR"], ".snapshot-download-complete").touch()
 PY
-  /opt/runtime-venv/bin/python /opt/recipe/scripts/coalesce_rank_sliced_exl3.py \
-    --input-dir "${source_dir}" \
-    --output-dir "${model_dir}" \
-    --link-carried \
-    --reuse-complete \
-    --workers "${COALESCE_WORKERS:-1}"
+  if [[ "${model_layout}" == "rank-sliced" ]]; then
+    /opt/runtime-venv/bin/python /opt/recipe/scripts/coalesce_rank_sliced_exl3.py \
+      --input-dir "${source_dir}" \
+      --output-dir "${model_dir}" \
+      --link-carried \
+      --reuse-complete \
+      --workers "${COALESCE_WORKERS:-1}"
+  fi
 fi
 
-verify_args=()
-if [[ "${VERIFY_MODEL_CHECKSUMS:-1}" != "1" ]]; then
-  verify_args+=(--skip-checksums)
+if [[ "${model_layout}" == "rank-sliced" ]]; then
+  verify_args=()
+  if [[ "${VERIFY_MODEL_CHECKSUMS:-1}" != "1" ]]; then
+    verify_args+=(--skip-checksums)
+  fi
+  /opt/runtime-venv/bin/python /opt/recipe/scripts/verify_tp1_manifest.py \
+    "${model_dir}" "${verify_args[@]}"
+elif [[ ! -s "${model_dir}/model.safetensors.index.json" ]]; then
+  echo "Hugging Face checkpoint is incomplete at ${model_dir}" >&2
+  exit 1
 fi
-/opt/runtime-venv/bin/python /opt/recipe/scripts/verify_tp1_manifest.py \
-  "${model_dir}" "${verify_args[@]}"
 
+if [[ "${mode}" == "dspark" && "${model_layout}" != "rank-sliced" ]]; then
+  echo "MODE=dspark is not supported for MODEL_LAYOUT=hf; use MODE=mtp0" >&2
+  exit 2
+fi
 if [[ "${mode}" == "dspark" && ! -f "${draft_dir}/model.safetensors.index.json" ]]; then
   /opt/runtime-venv/bin/python /opt/recipe/scripts/build_dspark_draft.py \
     --source "${model_dir}" \
@@ -73,7 +103,7 @@ export MAX_NUM_BATCHED_TOKENS=${MAX_NUM_BATCHED_TOKENS:-8224}
 export MAX_CUDAGRAPH_CAPTURE_SIZE=${MAX_CUDAGRAPH_CAPTURE_SIZE:-6}
 export CUDAGRAPH_CAPTURE_SIZES=${CUDAGRAPH_CAPTURE_SIZES:-6}
 export GPU_MEMORY_UTILIZATION=${GPU_MEMORY_UTILIZATION:-0.9465}
-export LOAD_FORMAT=instanttensor
+export LOAD_FORMAT=${LOAD_FORMAT:-instanttensor}
 export PREFIX_CACHE=1
 export ENABLE_FLASHINFER_AUTOTUNE=1
 export VLLM_USE_BREAKABLE_CUDAGRAPH=0

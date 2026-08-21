@@ -1,0 +1,59 @@
+# Generic SM12x EXL3 support for the TurboDerp 2.77bpw branch.
+#
+# The default runtime deliberately omits ExLlamaV3's parity extension because
+# the validated 0xSero rank-sliced checkpoint stays on SparkInfer kernels. The
+# TurboDerp checkpoint quantizes dense layers too, so vLLM needs exl3_gemm.
+# This repository targets GB10/SM121, hence the 12.1a-only extension build.
+FROM ghcr.io/0xsero/deepseek-v4-flash-0731-spark-sparkinfer@sha256:2e077489a83a0360952828051fe7f7a32c1801e5ce8436d85f7267583d614ff4
+
+ARG EXLLAMAV3_REPOSITORY=https://github.com/brandonmmusic-max/exllamav3.git
+ARG EXLLAMAV3_REVISION=704aefd743b390af4bd0fb429d1906f9b964c7d8
+
+COPY image-patch/exllamav3-arm64.patch /tmp/exllamav3-arm64.patch
+
+RUN git init /opt/exllamav3-sm120 && \
+    git -C /opt/exllamav3-sm120 remote add origin "${EXLLAMAV3_REPOSITORY}" && \
+    git -C /opt/exllamav3-sm120 fetch --depth=1 origin "${EXLLAMAV3_REVISION}" && \
+    git -C /opt/exllamav3-sm120 checkout --detach FETCH_HEAD && \
+    git -C /opt/exllamav3-sm120 apply --check /tmp/exllamav3-arm64.patch && \
+    git -C /opt/exllamav3-sm120 apply /tmp/exllamav3-arm64.patch && \
+    cd /opt/exllamav3-sm120 && \
+    CUDA_HOME=/usr/local/cuda \
+    TORCH_CUDA_ARCH_LIST=12.1a \
+    MAX_JOBS=4 \
+    /opt/runtime-venv/bin/python -m pip install \
+      --no-build-isolation --no-deps --no-cache-dir . && \
+    cd / && rm -rf /opt/exllamav3-sm120 /root/.cache
+
+RUN /opt/runtime-venv/bin/python - <<'PY'
+# Importing torch first loads its C++/CUDA libraries before the extension.
+import torch  # noqa: F401
+import exllamav3_ext
+
+assert hasattr(exllamav3_ext, "exl3_gemm")
+print("Built ExLlamaV3 EXL3 extension:", exllamav3_ext.__file__)
+PY
+
+# The DeepSeek V4 model uses w1/w2/w3 expert names. Supplying those names to
+# FusedMoE lets the generic EXL3 quantizer identify the published HF experts;
+# this only changes the opt-in derived image, never the default runtime.
+COPY image-patch/deepseek-v4-exl3-hf.patch /tmp/deepseek-v4-exl3-hf.patch
+COPY image-patch/deepseek-v4-compressor-exl3.patch /tmp/deepseek-v4-compressor-exl3.patch
+COPY image-patch/deepseek-v4-exl3-compressor-forward.patch /tmp/deepseek-v4-exl3-compressor-forward.patch
+COPY image-patch/deepseek-v4-exl3-o-proj.patch /tmp/deepseek-v4-exl3-o-proj.patch
+COPY image-patch/exl3-batched-linear.patch /tmp/exl3-batched-linear.patch
+COPY image-patch/flashinfer-ignore-cudart-stub.patch /tmp/flashinfer-ignore-cudart-stub.patch
+RUN cd /opt/vllm && \
+    git apply --check /tmp/deepseek-v4-exl3-hf.patch && \
+    git apply --check /tmp/deepseek-v4-compressor-exl3.patch && \
+    git apply --check /tmp/deepseek-v4-exl3-compressor-forward.patch && \
+    git apply --check /tmp/deepseek-v4-exl3-o-proj.patch && \
+    git apply --check /tmp/exl3-batched-linear.patch && \
+    git apply /tmp/deepseek-v4-exl3-hf.patch && \
+    git apply /tmp/deepseek-v4-compressor-exl3.patch && \
+    git apply /tmp/deepseek-v4-exl3-compressor-forward.patch && \
+    git apply /tmp/deepseek-v4-exl3-o-proj.patch && \
+    git apply /tmp/exl3-batched-linear.patch && \
+    cd / && \
+    git apply --check /tmp/flashinfer-ignore-cudart-stub.patch && \
+    git apply /tmp/flashinfer-ignore-cudart-stub.patch

@@ -1,0 +1,22 @@
+--- a/vllm/models/deepseek_v4/attention.py
++++ b/vllm/models/deepseek_v4/attention.py
+@@ -623,6 +623,9 @@
+             compressor = self.compressor
+ 
+             def compressor_kv_score() -> torch.Tensor:
++                if not hasattr(compressor.fused_wkv_wgate, "weight"):
++                    output = compressor.fused_wkv_wgate(hidden_states)
++                    return output.to(torch.float32)
+                 return torch.mm(
+                     hidden_states,
+                     compressor.fused_wkv_wgate.weight.T,
+@@ -640,6 +643,9 @@
+                 return weights
+ 
+             def indexer_compressor_kv_score() -> torch.Tensor:
++                if not hasattr(indexer.compressor.fused_wkv_wgate, "weight"):
++                    output = indexer.compressor.fused_wkv_wgate(hidden_states)
++                    return output.to(torch.float32)
+                 return torch.mm(
+                     hidden_states,
+                     indexer.compressor.fused_wkv_wgate.weight.T,

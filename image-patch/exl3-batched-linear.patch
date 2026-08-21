@@ -1,0 +1,94 @@
+--- a/vllm/model_executor/layers/quantization/exl3.py
++++ b/vllm/model_executor/layers/quantization/exl3.py
+@@ -759,6 +759,11 @@
+     def _linear_prefix_is_exl3(self, prefix: str) -> bool:
+         if self._is_exl3_prefix(prefix):
+             return True
++        # DeepSeek V4 stores its grouped WO-A projection as one EXL3 matrix
++        # per output group (``wo_a.slice.N``), while vLLM exposes one batched
++        # linear module at ``wo_a``.
++        if self._is_exl3_prefix(f"{prefix}.slice.0"):
++            return True
+         leaf = prefix.rsplit(".", 1)[-1]
+         source_leaves = self.packed_modules_mapping.get(leaf)
+         if not source_leaves:
+@@ -900,12 +905,34 @@
+         layer.exl3_input_size = input_size
+         layer.exl3_input_size_per_partition = input_size_per_partition
+         layer.exl3_output_size = output_size
++        prefix = getattr(layer, "prefix", "")
++        bmm_batch_size = 0
++        while self.quant_config._is_exl3_prefix(
++            f"{prefix}.slice.{bmm_batch_size}"
++        ):
++            bmm_batch_size += 1
++        if not bmm_batch_size and getattr(layer, "is_bmm", False):
++            bmm_batch_size = int(getattr(layer, "bmm_batch_size", 0))
++        if bmm_batch_size:
++            if output_size % bmm_batch_size:
++                raise ValueError(
++                    f"EXL3 batched linear output {output_size} is not divisible "
++                    f"by its batch size {bmm_batch_size}"
++                )
++            output_partition_sizes = [output_size // bmm_batch_size] * bmm_batch_size
+         layer.exl3_output_partition_sizes = output_partition_sizes
+         layer.exl3_shard_ids = self._shard_ids_for_layer(layer, output_partition_sizes)
+         layer.exl3_parallel_mode = (
+             "row" if input_size_per_partition != input_size else "column"
+         )
+-        source_prefixes = self._source_prefixes_for_layer(layer, layer.exl3_shard_ids)
++        if bmm_batch_size:
++            source_prefixes = [
++                f"{prefix}.slice.{idx}" for idx in range(bmm_batch_size)
++            ]
++        else:
++            source_prefixes = self._source_prefixes_for_layer(
++                layer, layer.exl3_shard_ids
++            )
+         layer.exl3_expected_codebooks = {
+             shard_id: self.quant_config.codebook_for_prefix(source_prefix)
+             for shard_id, source_prefix in zip(
+@@ -969,16 +996,36 @@
+         x: torch.Tensor,
+         bias: torch.Tensor | None = None,
+     ) -> torch.Tensor:
+-        original_shape = x.shape[:-1]
+         original_dtype = x.dtype
+-        x_2d = x.reshape(-1, x.shape[-1]).to(torch.float16).contiguous()
+-        outputs = [
+-            self._apply_one(layer, x_2d, shard_id) for shard_id in layer.exl3_shard_ids
+-        ]
+-        output = outputs[0] if len(outputs) == 1 else torch.cat(outputs, dim=-1)
++        if getattr(layer, "is_bmm", False) and len(layer.exl3_shard_ids) > 1:
++            batch_size = len(layer.exl3_shard_ids)
++            if x.ndim < 2 or x.shape[-2] != batch_size:
++                raise ValueError(
++                    "EXL3 batched linear expected the penultimate input axis "
++                    f"to have size {batch_size}, got shape {tuple(x.shape)}"
++                )
++            outputs = []
++            for idx, shard_id in enumerate(layer.exl3_shard_ids):
++                x_shard = (
++                    x[..., idx, :]
++                    .reshape(-1, x.shape[-1])
++                    .to(torch.float16)
++                    .contiguous()
++                )
++                output = self._apply_one(layer, x_shard, shard_id)
++                outputs.append(output.reshape(*x.shape[:-2], output.shape[-1]))
++            output = torch.stack(outputs, dim=-2)
++        else:
++            original_shape = x.shape[:-1]
++            x_2d = x.reshape(-1, x.shape[-1]).to(torch.float16).contiguous()
++            outputs = [
++                self._apply_one(layer, x_2d, shard_id)
++                for shard_id in layer.exl3_shard_ids
++            ]
++            output = outputs[0] if len(outputs) == 1 else torch.cat(outputs, dim=-1)
++            output = output.reshape(*original_shape, output.shape[-1])
+         if bias is not None:
+             output = output + bias.to(dtype=output.dtype)
+-        output = output.reshape(*original_shape, output.shape[-1])
+         return output if output.dtype == original_dtype else output.to(original_dtype)
+ 
+     @staticmethod

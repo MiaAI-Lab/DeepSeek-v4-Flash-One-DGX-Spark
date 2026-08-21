@@ -1,0 +1,28 @@
+--- a/vllm/models/deepseek_v4/nvidia/ops/o_proj.py
++++ b/vllm/models/deepseek_v4/nvidia/ops/o_proj.py
+@@ -86,6 +86,25 @@
+     Shared by the FlashMLA and FlashInfer CUDA backends. ``einsum_recipe`` /
+     ``tma_aligned_scales`` come from ``compute_fp8_einsum_recipe``.
+     """
++    if not hasattr(wo_a, "weight"):
++        # Generic EXL3 stores WO-A as one matrix per output group rather than
++        # an FP8 tensor. Apply inverse GPT-J RoPE in BF16, then let the EXL3
++        # linear method run the grouped matrices as a batched linear.
++        cache = cos_sin_cache.index_select(0, positions.to(torch.int64))
++        half = rope_dim // 2
++        cos = cache[:, :half].unsqueeze(1).to(torch.float32)
++        sin = cache[:, half:rope_dim].unsqueeze(1).to(torch.float32)
++        rope = o[..., nope_dim:].to(torch.float32)
++        even = rope[..., 0::2]
++        odd = rope[..., 1::2]
++        inverse_rope = torch.stack(
++            (even * cos + odd * sin, odd * cos - even * sin), dim=-1
++        ).flatten(-2)
++        o_bf16 = torch.cat((o[..., :nope_dim], inverse_rope.to(o.dtype)), dim=-1)
++        grouped = o_bf16.view(o.shape[0], n_groups, -1)
++        z = wo_a(grouped)
++        return wo_b(z.flatten(1))
++
+     o_fp8, o_scale = fused_inv_rope_fp8_quant(
+         o,
+         positions,

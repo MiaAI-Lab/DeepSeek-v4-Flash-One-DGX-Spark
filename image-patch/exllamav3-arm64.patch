@@ -1,0 +1,84 @@
+diff --git a/exllamav3/exllamav3_ext/avx2_target.cpp b/exllamav3/exllamav3_ext/avx2_target.cpp
+index f085320..83d4122 100644
+--- a/exllamav3/exllamav3_ext/avx2_target.cpp
++++ b/exllamav3/exllamav3_ext/avx2_target.cpp
+@@ -2,6 +2,9 @@
+ 
+ bool is_avx2_supported()
+ {
++#if defined(__aarch64__)
++    return false;
++#else
+     static bool avx2_check = false;
+     static bool avx2_supported = false;
+     if (avx2_check) return avx2_supported;
+@@ -16,4 +19,5 @@ bool is_avx2_supported()
+     // if (avx2_supported) printf("AVX2 supported\n");
+     // else printf("AVX2 not supported\n");
+     return avx2_supported;
++#endif
+ }
+\ No newline at end of file
+diff --git a/exllamav3/exllamav3_ext/avx512_target.cpp b/exllamav3/exllamav3_ext/avx512_target.cpp
+index 2a676f6..9e63527 100644
+--- a/exllamav3/exllamav3_ext/avx512_target.cpp
++++ b/exllamav3/exllamav3_ext/avx512_target.cpp
+@@ -2,6 +2,9 @@
+ 
+ bool is_avx512_supported()
+ {
++#if defined(__aarch64__)
++    return false;
++#else
+     static bool avx512_check = false;
+     static bool avx512_supported = false;
+     if (avx512_check) return avx512_supported;
+@@ -34,4 +37,5 @@ bool is_avx512_supported()
+     // if (avx512_supported) printf("AVX-512 supported\n");
+     // else printf("AVX-512 not supported\n");
+     return avx512_supported;
++#endif
+ }
+diff --git a/exllamav3/exllamav3_ext/parallel/all_reduce_cpu_avx2.cpp b/exllamav3/exllamav3_ext/parallel/all_reduce_cpu_avx2.cpp
+index f55148c..8ae26a5 100644
+--- a/exllamav3/exllamav3_ext/parallel/all_reduce_cpu_avx2.cpp
++++ b/exllamav3/exllamav3_ext/parallel/all_reduce_cpu_avx2.cpp
+@@ -1,3 +1,11 @@
++#if defined(__aarch64__)
++#include "all_reduce_cpu_avx2.h"
++#include <stdexcept>
++void enable_fast_fp() {}
++void enable_fast_fp_avx2() {}
++void perform_cpu_reduce(PGContext*, size_t, uint32_t, uint8_t*, size_t) { throw std::runtime_error("x86 CPU reduction is unavailable on ARM64"); }
++void perform_cpu_reduce_avx2(PGContext*, size_t, uint32_t, uint8_t*, size_t) { throw std::runtime_error("AVX2 is unavailable on ARM64"); }
++#else
+ #include <immintrin.h>
+ #include "all_reduce_cpu_avx2.h"
+ #include "all_reduce_cpu_avx512.h"
+@@ -228,3 +236,5 @@ void perform_cpu_reduce_avx2
+         num_chunks--;
+     }
+ }
++
++#endif
+diff --git a/exllamav3/exllamav3_ext/parallel/all_reduce_cpu_avx512.cpp b/exllamav3/exllamav3_ext/parallel/all_reduce_cpu_avx512.cpp
+index e9bc401..ce105ac 100644
+--- a/exllamav3/exllamav3_ext/parallel/all_reduce_cpu_avx512.cpp
++++ b/exllamav3/exllamav3_ext/parallel/all_reduce_cpu_avx512.cpp
+@@ -1,3 +1,10 @@
++#if defined(__aarch64__)
++#include "all_reduce_cpu_avx512.h"
++#include <stdexcept>
++void enable_fast_fp_avx512() {}
++void bf16_add_inplace_avx512(uint16_t*, const uint16_t*, size_t) { throw std::runtime_error("AVX-512 is unavailable on ARM64"); }
++void perform_cpu_reduce_avx512(PGContext*, size_t, uint32_t, uint8_t*, size_t) { throw std::runtime_error("AVX-512 is unavailable on ARM64"); }
++#else
+ #include <immintrin.h>
+ #include "all_reduce_cpu_avx512.h"
+ #include "all_reduce_cpu_avx2.h"
+@@ -273,3 +280,5 @@ void perform_cpu_reduce_avx512
+         num_chunks--;
+     }
+ }
++
++#endif
