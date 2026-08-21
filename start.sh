@@ -6,7 +6,7 @@
 # │ DEEP-CONTEXT VARIANT — 334k single-request (validated 2026-08-20)          │
 # │ Native 432 B NVFP4 KV records + util 0.94 → 337,841-token pool with        │
 # │ DSpark speculative decoding healthy (acceptance ~0.65/0.44/0.31/0.17/0.07) │
-# │   * the project's only launcher; writes ./compose.yml                     │
+# │   * the project's only launcher; writes ./compose.yml                      │
 # └──────────────────────────────────────────────────────────────────────────┘
 #
 
