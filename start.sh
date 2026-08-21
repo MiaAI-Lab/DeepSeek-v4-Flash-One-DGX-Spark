@@ -610,7 +610,7 @@ cmd_start() {
       echo
       echo "   Try it:"
       echo "     curl -sS ${SERVING_URL}/v1/chat/completions \\"
-      echo "       -H 'Content-Type: application/json' -d '{'"
+      echo "       -H 'Content-Type: application/json' -d '{"
       echo "         \"model\": \"$SERVED_MODEL_NAME\","
       echo "         \"messages\": [{\"role\": \"user\", \"content\": \"Write a correct Python function that returns the first n Fibonacci numbers.\"}],"
       echo "         \"temperature\": 0, \"max_completion_tokens\": 256 }'"
