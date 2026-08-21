@@ -196,6 +196,7 @@ Served model name: `deepseek-v4-flash-0731`. API: `http://127.0.0.1:8888/v1` (Op
 | `REMOTE_HOST` / `REMOTE_USER` / `REMOTE_SHARE_DIR` | *(empty)* / `mia` / `/home/mia/shared` | LAN-share mode, **opt-in** — set `REMOTE_HOST` to reuse one weight copy across machines; defaults target the spark3 shared folder (`10.0.0.1` / `mia` / `/home/mia/shared`) |
 | `HF_CACHE` | `./hf-hub` (local) or `$MIA_MOUNT` (remote mode) | where weights download — always resolved absolute |
 | `SERVING_PORT` | 8888 | OpenAI-compatible port |
+| `SERVING_HOST` | `0.0.0.0` | bind address (passed to vLLM as `HOST`). `0.0.0.0` = reachable from the LAN, `127.0.0.1` = local-only, or pin one interface (`192.168.1.50`, `::`). **No auth sits in front of this port** — widen it only on a trusted network |
 
 Every tunable is an environment variable override: `GPU_MEMORY_UTILIZATION=0.94 ./start.sh`.
 
@@ -258,7 +259,7 @@ Treat **EXL3 3.0 bpw ≈ Q4_K_M–Q5_K range in GGUF quality, often closer to Q5
 
 ## Client configuration
 
-The server exposes an OpenAI-compatible API on `http://127.0.0.1:8888/v1`. Recommended settings for any client:
+The server exposes an OpenAI-compatible API on `http://127.0.0.1:8888/v1`. It binds `0.0.0.0` by default (the container runs with `network_mode: host`), so from another machine on the LAN use the Spark's own address — `http://<spark-ip>:8888/v1`. There is no authentication in front of the port: keep it on a trusted network, or run `SERVING_HOST=127.0.0.1 ./start.sh` for local-only and reach it over an SSH tunnel. Recommended settings for any client:
 
 | Setting | Value | Notes |
 |---|---|---|

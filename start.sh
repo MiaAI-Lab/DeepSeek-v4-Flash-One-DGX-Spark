@@ -18,6 +18,11 @@
 # and used as the cache root instead (the old default, now opt-in). No
 # HuggingFace login is required (model and image are public).
 #
+# The API binds 0.0.0.0:8888 by default (the container runs with
+# network_mode: host, so it is reachable from the LAN — there is no auth in
+# front of it). SERVING_HOST=127.0.0.1 ./start.sh keeps it local-only;
+# SERVING_HOST=<addr> pins one interface, SERVING_PORT=<n> changes the port.
+#
 # All tunables live in this file.  compose.yml is GENERATED — do not edit it.
 # The runtime image is aarch64-only and needs the NVIDIA Container Toolkit.
 #
@@ -159,6 +164,28 @@ HF_CACHE="$(realpath -m "$HF_CACHE")"
 # own HEALTHCHECK stays on 8000, so we override it below too).
 SERVING_PORT="${SERVING_PORT:-8888}"
 
+# vLLM bind address (the runtime honours the HOST env var). The container runs
+# with network_mode: host, so this is the host's own interface — 0.0.0.0 makes
+# the API reachable from the LAN (the default), 127.0.0.1 keeps it local-only,
+# and any concrete address (e.g. 192.168.1.50, or :: for all IPv6) pins one
+# interface. There is NO auth in front of this port: only widen the bind on a
+# network you trust, or put a reverse proxy in front.
+SERVING_HOST="${SERVING_HOST:-0.0.0.0}"
+
+# Address used to *probe* the server from this machine (health checks, printed
+# URLs). A wildcard bind is not a connectable address, so map it to loopback.
+case "$SERVING_HOST" in
+  ""|0.0.0.0|'*')   PROBE_HOST="127.0.0.1" ;;
+  '::'|'[::]'|'::0') PROBE_HOST="::1" ;;
+  *)                 PROBE_HOST="$SERVING_HOST" ;;
+esac
+# URL form: IPv6 literals must be bracketed.
+case "$PROBE_HOST" in
+  *:*) PROBE_URL_HOST="[${PROBE_HOST}]" ;;
+  *)   PROBE_URL_HOST="$PROBE_HOST" ;;
+esac
+SERVING_URL="http://${PROBE_URL_HOST}:${SERVING_PORT}"
+
 STARTUP_WAIT="${STARTUP_WAIT:-7200}"   # seconds to wait for /health on start
 LOCAL_MIN_FREE_GIB="${LOCAL_MIN_FREE_GIB:-130}"   # local needs: ~99 tp1 + ~10 image + draft
 SHARE_MIN_FREE_GIB="${SHARE_MIN_FREE_GIB:-130}"   # share needs: ~107 weights + headroom
@@ -171,7 +198,7 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 warn() { echo "WARNING: $*" >&2; }
 
 usage() {
-  sed -n '2,48p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//'
   exit 0
 }
 
@@ -379,7 +406,7 @@ services:
     entrypoint: ["/bin/bash", "-lc", "bash /patch-run-entrypoint.sh && exec /opt/recipe/scripts/entrypoint.sh"]
     # Override the image's hardcoded-8000 HEALTHCHECK for the new serving port.
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://127.0.0.1:${SERVING_PORT}/health"]
+      test: ["CMD", "curl", "-fsS", "--max-time", "5", "${SERVING_URL}/health"]
       interval: 30s
       timeout: 5s
       start_period: 20m
@@ -389,6 +416,7 @@ services:
       HF_TOKEN: \${HF_TOKEN:-}
       HF_HOME: /hf-cache
       PORT: "${SERVING_PORT}"
+      HOST: "${SERVING_HOST}"
       SERVED_MODEL_NAME: ${SERVED_MODEL_NAME}
       MODEL_REPO: ${MODEL_REPO}
       MODEL_REVISION: ${MODEL_REVISION}
@@ -559,20 +587,29 @@ cmd_start() {
   echo ">> First boot is intentionally long: pulls image, downloads ~107 GB"
   echo "   of weights onto the shared folder, coalesces TP4->TP1, builds the"
   echo "   K64 draft, captures CUDA graphs. Waiting up to ${STARTUP_WAIT}s for"
-  echo "   http://127.0.0.1:${SERVING_PORT}/health — live logs above; Ctrl-C"
+  echo "   ${SERVING_URL}/health — live logs above; Ctrl-C"
   echo "   here only stops the watcher, the server keeps running."
   echo
   local deadline=$(( $(date +%s) + STARTUP_WAIT ))
   while :; do
-    if curl -fsS --max-time 5 "http://127.0.0.1:${SERVING_PORT}/health" >/dev/null 2>&1; then
+    if curl -fsS --max-time 5 "${SERVING_URL}/health" >/dev/null 2>&1; then
       stop_logs
       trap - EXIT
       echo
-      echo ">> Model is serving: http://127.0.0.1:${SERVING_PORT} (OpenAI-compatible)"
+      echo ">> Model is serving: ${SERVING_URL} (OpenAI-compatible)"
       echo "   Served model name: $SERVED_MODEL_NAME"
+      case "$SERVING_HOST" in
+        ""|0.0.0.0|'::'|'[::]'|'::0'|'*')
+          local lan_ip
+          # || true: hostname -I is GNU-only; a failure here must not kill
+          # cmd_start (set -e + pipefail) after a successful boot.
+          lan_ip="$(hostname -I 2>/dev/null | awk '{print $1}')" || true
+          [ -n "$lan_ip" ] && echo "   Bound to ${SERVING_HOST} — also reachable at http://${lan_ip}:${SERVING_PORT} (no auth; trusted networks only)"
+          ;;
+      esac
       echo
       echo "   Try it:"
-      echo "     curl -sS http://127.0.0.1:${SERVING_PORT}/v1/chat/completions \\"
+      echo "     curl -sS ${SERVING_URL}/v1/chat/completions \\"
       echo "       -H 'Content-Type: application/json' -d '{'"
       echo "         \"model\": \"$SERVED_MODEL_NAME\","
       echo "         \"messages\": [{\"role\": \"user\", \"content\": \"Write a correct Python function that returns the first n Fibonacci numbers.\"}],"
