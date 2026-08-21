@@ -31,7 +31,7 @@ Serves the `0xSero/deepseek-v4-flash-0731-spark` build (3.0 bpw EXL3) via the `s
 
 | Metric | Value |
 |---|---|
-| Decode tok/s (structured) — `start.sh`, 330k context | **44–47 tok/s** |
+| Decode tok/s (structured) — `start.sh`, 384k context | **44–47 tok/s** |
 | KV cache pool | **439,622 tokens** (boot-dependent — see [Stress test](#stress-test)) |
 | Stress test — 320k & 370k context | exact needle recall, **0 preemptions** — see [Stress test](#stress-test) |
 
