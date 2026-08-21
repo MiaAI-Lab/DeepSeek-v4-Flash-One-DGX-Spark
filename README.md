@@ -32,7 +32,7 @@ Serves the `0xSero/deepseek-v4-flash-0731-spark` build (3.0 bpw EXL3) via the `s
 | Metric | Value |
 |---|---|
 | Decode tok/s (structured) — `start.sh`, 330k context | **44–47 tok/s** |
-| KV cache pool | **330k tokens** |
+| KV cache pool | **337,841 tokens** |
 
 ---
 
