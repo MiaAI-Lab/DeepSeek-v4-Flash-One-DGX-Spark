@@ -638,7 +638,15 @@ sync_aot_cache_stamp() {
       docker run --rm --entrypoint /bin/bash \
         -v "${cache_root}:/wipe" \
         "${IMAGE_DIGEST}" \
-        -c 'find /wipe -mindepth 1 -maxdepth 1 ! -name .dsv4_ablate_stamp -exec rm -rf {} +'
+        -c 'find /wipe -mindepth 1 -maxdepth 1 ! -name .dsv4_ablate_stamp -exec rm -rf {} +; chown -R '"$(id -u):$(id -g)"' /wipe'
+    fi
+    # The cache directory may itself have been created by the root container,
+    # so verify the host user can write the stamp before truncating it.
+    if ! touch "$stamp_file" 2>/dev/null; then
+      docker run --rm --entrypoint /bin/bash \
+        -v "${cache_root}:/wipe" \
+        "${IMAGE_DIGEST}" \
+        -c 'chown -R '"$(id -u):$(id -g)"' /wipe'
     fi
     printf '%s\n' "$stamp" > "$stamp_file"
   fi
