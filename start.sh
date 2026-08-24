@@ -602,12 +602,18 @@ YAML
 #   TypeError: expected Tensor()
 # Isolate (wipe) the on-disk AOT artifacts when the ablation stamp changes.
 ablate_stamp() {
-  printf 'ablate=%s|file=%s|lam=%s|layers=%s|v2' \
-    "$ABLATE" "$DSV4_ABLATE_FILE" "$DSV4_ABLATE_LAMBDA" "$DSV4_ABLATE_LAYERS"
+  local overlay_sha="none" direction_sha="none"
+  if [ "$ABLATE" = "1" ]; then
+    overlay_sha="$(sha256sum "${SCRIPT_DIR}/image-patch/vllm/models/deepseek_v4/nvidia/model.py" | cut -d' ' -f1)"
+    direction_sha="$(sha256sum "${SCRIPT_DIR}/data/files/direction_r1.pt" | cut -d' ' -f1)"
+  fi
+  printf 'ablate=%s|file=%s|lam=%s|layers=%s|overlay=%s|direction=%s|v3' \
+    "$ABLATE" "$DSV4_ABLATE_FILE" "$DSV4_ABLATE_LAMBDA" "$DSV4_ABLATE_LAYERS" \
+    "$overlay_sha" "$direction_sha"
 }
 
 aot_stamp_path() {
-  printf '%s\n' "${SCRIPT_DIR}/cache/vllm/torch_compile_cache/.dsv4_ablate_stamp"
+  printf '%s\n' "${SCRIPT_DIR}/cache/.dsv4_ablate_stamp"
 }
 
 aot_stamp_stale() {
@@ -620,8 +626,9 @@ aot_stamp_stale() {
 }
 
 sync_aot_cache_stamp() {
-  local cache_root="${SCRIPT_DIR}/cache/vllm/torch_compile_cache"
-  local stamp_file="${cache_root}/.dsv4_ablate_stamp"
+  local cache_root="${SCRIPT_DIR}/cache"
+  local stamp_file
+  stamp_file="$(aot_stamp_path)"
   local stamp old=""
   stamp="$(ablate_stamp)"
   mkdir -p "$cache_root"
