@@ -1355,13 +1355,16 @@ class DeepseekV4DecoderLayer(nn.Module):
             v = raw.get("directions")
             if isinstance(v, torch.Tensor) and v.dim() == 2:
                 v = v[0]
-        if not isinstance(v, torch.Tensor) or v.numel() != self.hidden_size:
+        if not isinstance(v, torch.Tensor) or v.dim() != 1 or v.numel() != self.hidden_size:
             raise ValueError(
-                f"DSV4_ABLATE_FILE: expected a {self.hidden_size}-dim "
+                f"DSV4_ABLATE_FILE: expected a 1-D {self.hidden_size}-dim "
                 f"direction tensor, got {type(v).__name__}"
             )
         v = v.to(torch.float32)
-        v = v / v.norm()
+        norm = v.norm()
+        if not v.isfinite().all() or not norm.isfinite() or norm <= 1e-12:
+            raise ValueError("DSV4_ABLATE_FILE: direction must be finite and non-zero")
+        v = v / norm
         self._refusal_dir = v.contiguous()
         self._ablate_lambda = _DSV4_ABLATE_LAMBDA
         logger.info_once(
